@@ -1,0 +1,11 @@
+District,Event,Value,Severity
+Mumbai,Rainfall,245.5,Red
+Puri,Cyclone,160.0,Orange
+Nagpur,Heatwave,46.2,Yellow
+Aizawl,Rainfall,40.0,Green
+Chennai,WindSpeed,95.0,Red
+Kolkata,Rainfall,110.0,Orange
+Bangalore,Rainfall,55.0,Yellow
+Kochi,Rainfall,210.0,Red
+Shimla,Snowfall,30.0,Yellow
+Hyderabad,Heatwave,42.0,Orange

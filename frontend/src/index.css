@@ -1,0 +1,23 @@
+@import "tailwindcss";
+
+@theme {
+  --color-apple-gray: #F5F5F7;
+  --color-apple-dark: #1D1D1F;
+  --color-apple-text: #86868B;
+  --color-apple-red: #FF3B30;
+  --color-apple-orange: #FF9500;
+  --color-apple-yellow: #FFCC00;
+  --color-apple-green: #34C759;
+  --font-sans: 'Inter', 'SF Pro Display', system-ui, sans-serif;
+}
+
+@layer base {
+  body {
+    background-color: var(--color-apple-gray);
+    color: var(--color-apple-dark);
+  }
+}
+
+.glass-panel {
+  @apply bg-white/70 backdrop-blur-xl border border-white/50 shadow-sm rounded-2xl;
+}
