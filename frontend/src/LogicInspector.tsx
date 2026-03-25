@@ -14,9 +14,9 @@ const HaskellLogo = () => (
 interface SnippetLine { code: string; hot?: boolean }
 interface Snippet { label: string; lines: SnippetLine[] }
 
-export type FeedItem = '0h' | '4h' | '12h';
+export type FeedItem = '0h' | '4h' | '8h' | '12h';
 
-function getSnippet(item: FeedItem, threat?: string, event?: string): Snippet {
+function getSnippet(item: FeedItem, threat?: string, event?: string, overrideData?: { intensity: number, origin: number }): Snippet {
   if (item === '0h') {
     return {
       label: 'Initial Alert — generateNarrative',
@@ -31,9 +31,19 @@ function getSnippet(item: FeedItem, threat?: string, event?: string): Snippet {
   }
 
   if (item === '4h') {
+    const isOverride = !!overrideData;
     return {
-      label: '4h Resilience — resilienceCoefficient',
-      lines: [
+      label: isOverride ? '4h Resilience — healthWithOverride' : '4h Resilience — resilienceCoefficient',
+      lines: isOverride ? [
+        { code: 'healthWithOverride :: AssetType -> Double -> Int -> Double -> Int -> Double' },
+        { code: 'healthWithOverride asset initialI rootT newI t =' },
+        { code: '    let r = resilienceCoefficient asset' },
+        { code: '        decay = if t <= rootT' },
+        { code: '                then r ** (fromIntegral t * initialI / 300.0)' },
+        { code: '                else r ** (fromIntegral rootT * initialI / 300.0' },
+        { code: `                           + fromIntegral (t - rootT) * ${overrideData.intensity} / 300.0)`, hot: true },
+        { code: '    in max 0.0 (100.0 * decay)' },
+      ] : [
         { code: 'resilienceCoefficient :: AssetType -> Double' },
         { code: 'resilienceCoefficient Hospital    = 0.98' },
         { code: 'resilienceCoefficient Residential = 0.85' },
@@ -46,15 +56,39 @@ function getSnippet(item: FeedItem, threat?: string, event?: string): Snippet {
     };
   }
 
+  if (item === '8h') {
+    return {
+      label: '8h Dependency — Interdependent Decay',
+      lines: [
+        { code: 'communicationTrajectory :: Double -> [Double] -> [Double]' },
+        { code: 'communicationTrajectory intensityVal pPoints =' },
+        { code: '    let r = resilienceCoefficient Communication' },
+        { code: '        step prevHealth pHealth =' },
+        { code: '            let effectiveI = if pHealth < 30.0 then intensityVal * 3.0 else intensityVal', hot: true },
+        { code: '                decayFactor = r ** (effectiveI / 300.0)' },
+        { code: '            in prevHealth * decayFactor' },
+        { code: '    in scanl step 100.0 (tail pPoints)' },
+      ]
+    };
+  }
+
   // 12h
+  const isOverride12 = !!overrideData;
   return {
-    label: '12h Convergence — Trajectory Build',
-    lines: [
+    label: isOverride12 ? '12h Convergence — Override Branching' : '12h Convergence — Trajectory Build',
+    lines: isOverride12 ? [
+      { code: 'mOverrideTrajectory = case (mOrigin, mIntensity) of' },
+      { code: `    (Just oTime, Just ${overrideData.intensity}) -> `, hot: true },
+      { code: '        let hO = trajectoryWithOverride Hospital intensityVal oTime oInt' },
+      { code: '            pO = trajectoryWithOverride PowerGrid intensityVal oTime oInt' },
+      { code: '            ... ' },
+      { code: '        in Just (zipWith5 mkPoint [0..12] hO pO tO rO)', hot: true },
+    ] : [
       { code: 'buildTrajectory :: Scenario -> TrajectoryResponse' },
       { code: 'buildTrajectory sc =' },
       { code: '    let intensityVal = parseIntensity (intensity sc)' },
       { code: '        pPoints      = trajectoryFor PowerGrid intensityVal', hot: true },
-      { code: '        trajectory   = zipWith4 mkPoint [0..12] hPoints pPoints ...', hot: true },
+      { code: '        trajectory   = zipWith5 mkPoint [0..12] hPoints pPoints ...', hot: true },
       { code: '    in TrajectoryResponse { trTrajectory = trajectory, ... }' },
     ]
   };
@@ -85,11 +119,12 @@ interface LogicModalProps {
   item: FeedItem;
   threat?: string;
   event?: string;
+  overrideData?: { intensity: number, origin: number };
   onClose: () => void;
 }
 
-export const LogicModal: React.FC<LogicModalProps> = ({ item, threat, event, onClose }) => {
-  const snippet = getSnippet(item, threat, event);
+export const LogicModal: React.FC<LogicModalProps> = ({ item, threat, event, overrideData, onClose }) => {
+  const snippet = getSnippet(item, threat, event, overrideData);
 
   // Close on Escape
   useEffect(() => {
@@ -142,6 +177,19 @@ export const LogicModal: React.FC<LogicModalProps> = ({ item, threat, event, onC
               </button>
             </div>
           </div>
+
+          {/* Override Alert Banner */}
+          {overrideData && (
+            <div className="px-5 py-3 bg-[#1f2937] border-b border-[#30363d] flex items-center gap-3 border-l-4 border-l-amber-500">
+              <div className="p-1.5 rounded-full bg-amber-500/20 text-amber-500 shrink-0">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              </div>
+              <p className="text-[#c9d1d9] text-[13px] leading-relaxed font-medium">
+                <strong className="text-white block mb-0.5 mt-0.5">Branching Logic Active:</strong>
+                Recalculating future impact from <span className="text-amber-400 font-bold">T+{overrideData.origin}</span> using <span className="text-amber-400 font-bold">{overrideData.intensity}mm</span>.
+              </p>
+            </div>
+          )}
 
           {/* Code block */}
           <div className="p-5 overflow-x-auto">

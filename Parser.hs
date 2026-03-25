@@ -18,6 +18,7 @@ defaultAssets =
     , Asset PowerGrid 100.0
     , Asset TransitHub 100.0
     , Asset Residential 100.0
+    , Asset Communication 100.0
     ]
 
 -- | Transform a raw IMD Archive Row into a Simulation Scenario

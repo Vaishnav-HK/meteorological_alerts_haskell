@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useSimulation, useDistricts, useTrajectory, type Scenario, type TrajectoryPoint } from './useSimulation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
@@ -7,10 +7,11 @@ import LogicModal, { type FeedItem } from './LogicInspector';
 
 // ── Asset colour constants ────────────────────────────────────────────────────
 const ASSET_COLORS = {
-  Hospital:    '#10b981', // Emerald Green
-  PowerGrid:   '#1e293b', // Dark Obsidian/Blue
-  TransitHub:  '#f59e0b', // Amber/Orange
-  Residential: '#94a3b8', // Slate Gray
+  Hospital: '#10b981',    // emerald-500
+  PowerGrid: '#1e293b',   // slate-800
+  TransitHub: '#f59e0b',  // amber-500
+  Residential: '#94a3b8', // slate-400
+  Communication: '#8B5CF6'// vibrant purple
 } as const;
 
 // ── Empty state helpers ───────────────────────────────────────────────────────
@@ -27,15 +28,24 @@ const emptyAssets = [
 ];
 
 // ── Build chart data from the 13-point trajectory (divergent decay) ───────────
-function buildChartData(points: TrajectoryPoint[]) {
-  return points.map(p => ({
-    hour:        `${p.tpHour}h`,
-    Hospital:    +p.tpHospital.toFixed(2),
-    PowerGrid:   +p.tpPowerGrid.toFixed(2),
-    TransitHub:  +p.tpTransitHub.toFixed(2),
-    Residential: +p.tpResidential.toFixed(2),
-    Average:     +((p.tpHospital + p.tpPowerGrid + p.tpTransitHub + p.tpResidential) / 4).toFixed(2),
-  }));
+function buildChartData(points: TrajectoryPoint[], overridePoints?: TrajectoryPoint[]) {
+  return points.map((p, i) => {
+    const op = overridePoints?.[i];
+    return {
+      hour:        `${p.tpHour}h`,
+      Hospital:    +p.tpHospital.toFixed(2),
+      PowerGrid:   +p.tpPowerGrid.toFixed(2),
+      TransitHub:  +p.tpTransitHub.toFixed(2),
+      Residential: +p.tpResidential.toFixed(2),
+      Communication: +p.tpCommunication.toFixed(2),
+      Average:     +((p.tpHospital + p.tpPowerGrid + p.tpTransitHub + p.tpResidential + p.tpCommunication) / 5).toFixed(2),
+      OHospital:   op ? +op.tpHospital.toFixed(2) : null,
+      OPowerGrid:  op ? +op.tpPowerGrid.toFixed(2) : null,
+      OTransitHub: op ? +op.tpTransitHub.toFixed(2) : null,
+      OResidential: op ? +op.tpResidential.toFixed(2) : null,
+      OCommunication: op ? +op.tpCommunication.toFixed(2) : null,
+    };
+  });
 }
 
 // ── Get per-asset health at a given hour from the trajectory ──────────────────
@@ -43,10 +53,11 @@ function getAssetHealthAt(points: TrajectoryPoint[], kind: string, hourIndex: nu
   const clamp = Math.min(Math.max(hourIndex, 0), 12);
   const pt = points[clamp];
   if (!pt) return 100;
-  if (kind === 'Hospital')    return pt.tpHospital;
-  if (kind === 'PowerGrid')   return pt.tpPowerGrid;
-  if (kind === 'TransitHub')  return pt.tpTransitHub;
-  if (kind === 'Residential') return pt.tpResidential;
+  if (kind === 'Hospital')      return pt.tpHospital;
+  if (kind === 'PowerGrid')     return pt.tpPowerGrid;
+  if (kind === 'TransitHub')    return pt.tpTransitHub;
+  if (kind === 'Residential')   return pt.tpResidential;
+  if (kind === 'Communication') return pt.tpCommunication;
   return 100;
 }
 
@@ -54,10 +65,26 @@ function getAssetHealthAt(points: TrajectoryPoint[], kind: string, hourIndex: nu
 const Dashboard = () => {
   const [activeDistrict, setActiveDistrict] = useState('');
   const [activeHour, setActiveHour] = useState(0);
-  const [openModal, setOpenModal] = useState<FeedItem | null>(null); 
+  const [openModal, setOpenModal]   = useState<'0h' | '4h' | '8h' | '12h' | null>(null); 
   const [protocolState, setProtocolState] = useState<'idle' | 'dispatching' | 'sent'>('idle');
+  const [overrideActive, setOverrideActive] = useState(false);
+  const [overrideIntensity, setOverrideIntensity] = useState(150);
+  const [debouncedIntensity, setDebouncedIntensity] = useState(150);
+  const [overrideOrigin, setOverrideOrigin] = useState(0);
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedIntensity(overrideIntensity);
+    }, 100);
+    return () => clearTimeout(handler);
+  }, [overrideIntensity]);
+
   const { data, loading, error } = useSimulation(activeDistrict);
-  const { trajectory }           = useTrajectory(activeDistrict);
+  const { trajectory }           = useTrajectory(
+    activeDistrict,
+    overrideActive ? overrideOrigin : undefined,
+    overrideActive ? debouncedIntensity : undefined
+  );
   const { districts }            = useDistricts();
 
   const handleSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -65,6 +92,7 @@ const Dashboard = () => {
     setActiveDistrict(val);
     setActiveHour(0);
     setProtocolState('idle');
+    setOverrideActive(false);
   };
 
   const handlePlaySimulation = () => {
@@ -130,6 +158,9 @@ const Dashboard = () => {
   // Resolve current displayed health for an asset at the active hour
   // Uses trajectory data if available (divergent decay), otherwise falls back to linear interpolation
   const getDisplayHealth = (assetKind: string, finalHealth: number): number => {
+    if (trajectory?.trOverrideTrajectory?.length && activeHour >= overrideOrigin) {
+      return getAssetHealthAt(trajectory.trOverrideTrajectory, assetKind, activeHour);
+    }
     if (trajectory?.trTrajectory?.length) {
       return getAssetHealthAt(trajectory.trTrajectory, assetKind, activeHour);
     }
@@ -151,7 +182,7 @@ const Dashboard = () => {
 
   const isBlank  = !activeDistrict || !data;
   const chartData = (trajectory?.trTrajectory?.length)
-    ? buildChartData(trajectory.trTrajectory)
+    ? buildChartData(trajectory.trTrajectory, trajectory.trOverrideTrajectory)
     : isBlank ? emptyChartData : emptyChartData;
 
   const globalScore   = isBlank ? "--" : calculateGlobalScore(data!);
@@ -304,7 +335,7 @@ const Dashboard = () => {
             </div>
 
             {/* Degradation Trajectory & Scrubber */}
-            <div className={`bg-white/70 backdrop-blur-md rounded-3xl p-8 shadow-sm border border-white/20 h-[380px] flex flex-col transition-all duration-500 ${isBlank ? 'opacity-40 blur-[3px] pointer-events-none' : ''}`}>
+            <div className={`bg-white/70 backdrop-blur-md rounded-3xl p-8 shadow-sm border border-white/20 h-[380px] flex flex-col relative transition-all duration-500 ${isBlank ? 'opacity-40 blur-[3px] pointer-events-none' : ''}`}>
               <h3 className="text-lg font-medium mb-4 text-gray-900">Degradation Trajectory &amp; Scrubber</h3>
               
               <div className="flex-1 -ml-4 mb-2">
@@ -319,27 +350,38 @@ const Dashboard = () => {
                     />
                     {!isBlank && <ReferenceLine x={`${activeHour}h`} stroke="#94a3b8" strokeWidth={1} strokeDasharray="4 4" />}
 
-                    {/* Hospital — Emerald Green — shallowest curve */}
-                    <Line type="monotone" dataKey="Hospital"    stroke={ASSET_COLORS.Hospital}    strokeWidth={2.5} dot={false} strokeLinecap="round" strokeOpacity={isBlank ? 0.3 : 0.9} />
-                    {/* Residential — Slate Gray */}
-                    <Line type="monotone" dataKey="Residential" stroke={ASSET_COLORS.Residential} strokeWidth={2}   dot={false} strokeLinecap="round" strokeOpacity={isBlank ? 0.3 : 0.85} />
-                    {/* TransitHub — Amber/Orange */}
-                    <Line type="monotone" dataKey="TransitHub"  stroke={ASSET_COLORS.TransitHub}  strokeWidth={2}   dot={false} strokeLinecap="round" strokeOpacity={isBlank ? 0.3 : 0.85} />
-                    {/* PowerGrid — Dark Obsidian/Blue — steepest curve */}
-                    <Line type="monotone" dataKey="PowerGrid"   stroke={ASSET_COLORS.PowerGrid}   strokeWidth={2.5} dot={false} strokeLinecap="round" strokeOpacity={isBlank ? 0.3 : 0.9} />
+                    {/* Ghost/Original Lines -> dashed and faded if override is active */}
+                    <Line type="monotone" dataKey="Hospital"    stroke={ASSET_COLORS.Hospital}    strokeWidth={overrideActive ? 2 : 2.5} dot={false} strokeDasharray={overrideActive ? "5 5" : ""} strokeOpacity={isBlank ? 0.3 : overrideActive ? 0.3 : 0.9} strokeLinecap="round" />
+                    <Line type="monotone" dataKey="Residential" stroke={ASSET_COLORS.Residential} strokeWidth={overrideActive ? 2 : 2}   dot={false} strokeDasharray={overrideActive ? "5 5" : ""} strokeOpacity={isBlank ? 0.3 : overrideActive ? 0.3 : 0.85} strokeLinecap="round" />
+                    <Line type="monotone" dataKey="TransitHub"  stroke={ASSET_COLORS.TransitHub}  strokeWidth={overrideActive ? 2 : 2}   dot={false} strokeDasharray={overrideActive ? "5 5" : ""} strokeOpacity={isBlank ? 0.3 : overrideActive ? 0.3 : 0.85} strokeLinecap="round" />
+                    <Line type="monotone" dataKey="PowerGrid"   stroke={ASSET_COLORS.PowerGrid}   strokeWidth={overrideActive ? 2 : 2.5} dot={false} strokeDasharray={overrideActive ? "5 5" : ""} strokeOpacity={isBlank ? 0.3 : overrideActive ? 0.3 : 0.9} strokeLinecap="round" />
+                    <Line type="monotone" dataKey="Communication" stroke={ASSET_COLORS.Communication} strokeWidth={overrideActive ? 2 : 2.5} dot={false} strokeDasharray={overrideActive ? "5 5" : ""} strokeOpacity={isBlank ? 0.3 : overrideActive ? 0.3 : 0.9} strokeLinecap="round" />
+
+                    {/* Bold Solid Override Lines */}
+                    {(overrideActive && trajectory?.trOverrideTrajectory) && (
+                      <>
+                        <Line type="monotone" dataKey="OHospital"    stroke={ASSET_COLORS.Hospital}    strokeWidth={3} dot={false} strokeLinecap="round" />
+                        <Line type="monotone" dataKey="OResidential" stroke={ASSET_COLORS.Residential} strokeWidth={3} dot={false} strokeLinecap="round" />
+                        <Line type="monotone" dataKey="OTransitHub"  stroke={ASSET_COLORS.TransitHub}  strokeWidth={3} dot={false} strokeLinecap="round" />
+                        <Line type="monotone" dataKey="OPowerGrid"   stroke={ASSET_COLORS.PowerGrid}   strokeWidth={3} dot={false} strokeLinecap="round" />
+                        <Line type="monotone" dataKey="OCommunication" stroke={ASSET_COLORS.Communication} strokeWidth={3} dot={false} strokeLinecap="round" />
+                      </>
+                    )}
                   </LineChart>
                 </ResponsiveContainer>
               </div>
               
-              {/* Slider */}
-              <div className="relative px-4 pb-2">
+              {/* Slider / Timeline Controls */}
+              <div className="relative px-4 pb-2 z-20 mt-2">
+                
+                {/* Time Scrubber */}
                 <div className="flex justify-between items-center text-[11px] font-semibold text-gray-400 mb-2 uppercase tracking-widest">
                   <span>0h</span>
                   <motion.span 
                     animate={{ scale: activeHour > 0 ? 1 : 0.95 }}
-                    className="text-gray-700 bg-white px-3 py-1 rounded-md shadow-sm border border-gray-200 block"
+                    className={`px-3 py-1 rounded-md shadow-sm border block transition-colors ${overrideActive ? 'bg-amber-100 border-amber-300 text-amber-800' : 'bg-white border-gray-200 text-gray-700'}`}
                   >
-                    T + {activeHour}h
+                    {overrideActive ? `NEW ORIGIN: T+${activeHour}h` : `T + ${activeHour}h`}
                   </motion.span>
                   <span>12h</span>
                 </div>
@@ -349,16 +391,61 @@ const Dashboard = () => {
                   value={activeHour}
                   onChange={(e) => setActiveHour(Number(e.target.value))}
                   disabled={isBlank}
-                  className={`w-full appearance-none h-1.5 rounded-full outline-none transition-all ${isBlank ? 'bg-gray-200 cursor-not-allowed' : 'bg-slate-200 cursor-pointer'} [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-gray-200 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:hover:scale-125 [&::-webkit-slider-thumb]:transition-transform`}
+                  className={`w-full appearance-none h-1.5 rounded-full outline-none transition-all ${isBlank ? 'bg-gray-200 cursor-not-allowed' : 'bg-slate-200 cursor-pointer'} [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-gray-200 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:hover:scale-125 [&::-webkit-slider-thumb]:transition-transform relative z-10`}
                 />
+
+                {/* Horizontal Override Slider */}
+                <div className={`mt-6 flex items-center justify-between gap-4 transition-opacity duration-300 ${isBlank ? 'opacity-40 pointer-events-none' : 'opacity-100'}`}>
+                  <span className="text-[11px] font-bold text-gray-400 uppercase tracking-widest whitespace-nowrap w-32">
+                    Forecast Intensity
+                  </span>
+                  
+                  <div className="flex-1 relative flex items-center">
+                    <input 
+                      type="range"
+                      min="50" max="350" step="1"
+                      value={overrideActive ? overrideIntensity : (trajectory ? parseInt(trajectory.trIntensity) || 150 : 150)}
+                      onChange={(e) => {
+                        if (!overrideActive || activeHour !== overrideOrigin) {
+                          setOverrideOrigin(activeHour);
+                        }
+                        setOverrideActive(true);
+                        setOverrideIntensity(Number(e.target.value));
+                      }}
+                      disabled={isBlank}
+                      className="w-full appearance-none h-2.5 rounded-full outline-none bg-white/60 backdrop-blur-md shadow-inner transition-all border border-gray-200/50 cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:shadow-lg [&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-gray-100 [&::-webkit-slider-thumb]:hover:scale-110 [&::-webkit-slider-thumb]:transition-transform relative z-10"
+                    />
+                  </div>
+
+                  <div className="w-16 text-right flex flex-col items-end">
+                    <span className="text-[12px] font-bold text-gray-800 bg-white/80 backdrop-blur-md shadow-sm border border-gray-200/50 px-2.5 py-1 rounded-lg">
+                      {overrideActive ? overrideIntensity : (trajectory ? parseInt(trajectory.trIntensity) || 150 : 150)} mm
+                    </span>
+                    <AnimatePresence>
+                      {overrideActive && (
+                        <motion.button 
+                          initial={{ opacity: 0, height: 0 }} 
+                          animate={{ opacity: 1, height: 'auto' }} 
+                          exit={{ opacity: 0, height: 0 }}
+                          onClick={() => setOverrideActive(false)} 
+                          className="mt-1.5 text-[9px] uppercase tracking-wider text-apple-red font-bold hover:underline"
+                        >
+                          Reset
+                        </motion.button>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                </div>
+
               </div>
 
-              {/* Custom Legend — fanned out order, top to bottom: Hospital, Residential, TransitHub, PowerGrid */}
+              {/* Custom Legend — fanned out order, top to bottom: Hospital, Residential, TransitHub, PowerGrid, Communication */}
               <div className={`flex justify-end gap-3 mt-4 text-[10px] text-gray-500 font-medium uppercase tracking-wider pr-4 transition-opacity ${isBlank ? 'opacity-0' : 'opacity-100'}`}>
                 <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full" style={{ backgroundColor: ASSET_COLORS.Hospital }}></div>Hospital</div>
                 <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full" style={{ backgroundColor: ASSET_COLORS.Residential }}></div>Residential</div>
                 <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full" style={{ backgroundColor: ASSET_COLORS.TransitHub }}></div>Transit</div>
                 <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full" style={{ backgroundColor: ASSET_COLORS.PowerGrid }}></div>Power</div>
+                <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full" style={{ backgroundColor: ASSET_COLORS.Communication }}></div>Comm</div>
               </div>
 
             </div>
@@ -416,6 +503,22 @@ const Dashboard = () => {
                   )}
                 </AnimatePresence>
 
+                {/* 8h entry */}
+                <AnimatePresence>
+                  {(!isBlank && activeHour >= 8) && (
+                  <motion.div initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, scale: 0.95 }} className="relative pl-6">
+                    <div className="absolute w-3 h-3 bg-white border-2 border-purple-500 rounded-full -left-[6.5px] top-1.5"></div>
+                    <div className="text-xs font-semibold text-gray-400 mb-1">8h - T+8.00</div>
+                    <div className="text-[15px] font-medium text-gray-800 leading-snug">
+                       Communication node stress detected. Switching to backup satellite link as terrestrial fiber enters critical saturation.
+                    </div>
+                    <button onClick={() => setOpenModal('8h')} className="mt-2 text-[10px] uppercase tracking-widest font-semibold text-[#6a4b9a] hover:text-[#8a6ab5] flex items-center gap-1 transition-colors">
+                      <span>⌥</span> View Haskell Logic
+                    </button>
+                  </motion.div>
+                  )}
+                </AnimatePresence>
+
                 {/* 12h entry */}
                 <AnimatePresence>
                   {(!isBlank && activeHour >= 12) && (
@@ -456,6 +559,7 @@ const Dashboard = () => {
             item={openModal!}
             threat={data!.threat}
             event={data!.event}
+            overrideData={overrideActive ? { intensity: overrideIntensity, origin: overrideOrigin } : undefined}
             onClose={() => setOpenModal(null)}
           />
         )}

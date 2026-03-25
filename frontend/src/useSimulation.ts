@@ -21,6 +21,7 @@ export interface TrajectoryPoint {
   tpPowerGrid: number;
   tpTransitHub: number;
   tpResidential: number;
+  tpCommunication: number;
 }
 
 export interface TrajectoryResponse {
@@ -29,6 +30,7 @@ export interface TrajectoryResponse {
   trIntensity: string;
   trEvent: string;
   trTrajectory: TrajectoryPoint[];
+  trOverrideTrajectory?: TrajectoryPoint[];
 }
 
 export function useSimulation(district: string) {
@@ -76,7 +78,7 @@ export function useSimulation(district: string) {
   return { data, loading, error };
 }
 
-export function useTrajectory(district: string) {
+export function useTrajectory(district: string, overrideOrigin?: number, overrideIntensity?: number) {
   const [trajectory, setTrajectory] = useState<TrajectoryResponse | null>(null);
   const [loadingTrajectory, setLoadingTrajectory] = useState(false);
 
@@ -90,7 +92,13 @@ export function useTrajectory(district: string) {
     setLoadingTrajectory(true);
     setTrajectory(null);
 
-    fetch(`http://localhost:8080/trajectory/${encodeURIComponent(district)}`)
+    const url = new URL(`http://localhost:8080/trajectory/${encodeURIComponent(district)}`);
+    if (overrideOrigin !== undefined && overrideIntensity !== undefined) {
+      url.searchParams.append('overrideOrigin', overrideOrigin.toString());
+      url.searchParams.append('overrideIntensity', overrideIntensity.toString());
+    }
+
+    fetch(url.toString())
       .then(res => {
         if (!res.ok) throw new Error("Trajectory fetch failed");
         return res.json();
@@ -106,7 +114,7 @@ export function useTrajectory(district: string) {
       });
 
     return () => { isMounted = false; };
-  }, [district]);
+  }, [district, overrideOrigin, overrideIntensity]);
 
   return { trajectory, loadingTrajectory };
 }

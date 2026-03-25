@@ -5,10 +5,11 @@ import Types
 -- | Asset-specific Resilience Factor (R).
 -- Encodes domain expertise: the higher R, the shallower the decay curve.
 resilienceCoefficient :: AssetType -> Double
-resilienceCoefficient Hospital    = 0.98  -- Reinforced; high redundancy
-resilienceCoefficient Residential = 0.85  -- Standard urban decay
-resilienceCoefficient TransitHub  = 0.75  -- Vulnerable to flooding/congestion
-resilienceCoefficient PowerGrid   = 0.65  -- Critical sensitivity; steepest curve
+resilienceCoefficient Hospital      = 0.98  -- Reinforced; high redundancy
+resilienceCoefficient Residential   = 0.85  -- Standard urban decay
+resilienceCoefficient TransitHub    = 0.75  -- Vulnerable to flooding/congestion
+resilienceCoefficient PowerGrid     = 0.65  -- Critical sensitivity; steepest curve
+resilienceCoefficient Communication = 0.90  -- Highly resilient unless PowerGrid fails
 
 -- | Parse the intensity string to a numeric value.
 -- Defaults to 150 (mid-range) if unparseable.
@@ -27,10 +28,44 @@ healthAt assetType intensityVal t =
         decay = r ** (fromIntegral t * intensityVal / 300.0)
     in max 0.0 (100.0 * decay)
 
+-- | Compute health including a manual override at a specific root time.
+healthWithOverride :: AssetType -> Double -> Int -> Double -> Int -> Double
+healthWithOverride assetType initialI rootT newI t =
+    let r = resilienceCoefficient assetType
+        decay = if t <= rootT 
+                then r ** (fromIntegral t * initialI / 300.0)
+                else r ** (fromIntegral rootT * initialI / 300.0 + fromIntegral (t - rootT) * newI / 300.0)
+    in max 0.0 (100.0 * decay)
+
 -- | Build the 13-point (T+0 to T+12) trajectory for one asset type.
 trajectoryFor :: AssetType -> Double -> [Double]
 trajectoryFor assetType intensityVal =
     map (healthAt assetType intensityVal) [0..12]
+
+-- | Build the 13-point trajectory including an override from rootT.
+trajectoryWithOverride :: AssetType -> Double -> Int -> Double -> [Double]
+trajectoryWithOverride assetType initialI rootT newI =
+    map (healthWithOverride assetType initialI rootT newI) [0..12]
+
+-- | Interdependent decay models for Communication
+communicationTrajectory :: Double -> [Double] -> [Double]
+communicationTrajectory intensityVal pPoints =
+    let r = resilienceCoefficient Communication
+        step prevHealth pHealth =
+            let effectiveI = if pHealth < 30.0 then intensityVal * 3.0 else intensityVal
+                decayFactor = r ** (effectiveI / 300.0)
+            in prevHealth * decayFactor
+    in scanl step 100.0 (tail pPoints)
+
+communicationTrajectoryWithOverride :: Double -> Int -> Double -> [Double] -> [Double]
+communicationTrajectoryWithOverride initialI rootT newI pPoints =
+    let r = resilienceCoefficient Communication
+        step (t, prevHealth) pHealth =
+            let currentI = if t > rootT then newI else initialI
+                effectiveI = if pHealth < 30.0 then currentI * 3.0 else currentI
+                decayFactor = r ** (effectiveI / 300.0)
+            in (t + 1, prevHealth * decayFactor)
+    in map snd $ scanl step (1, 100.0) (tail pPoints)
 
 -- | Recursive simulation for N hours (kept for the existing /simulate endpoint)
 tick :: Scenario -> Scenario
@@ -39,7 +74,13 @@ tick sc =
         nextHour      = hour sc + 1
         updateAsset a =
             let r        = resilienceCoefficient (kind a)
-                newH     = health a * (r ** (intensityVal / 300.0))
+                pHealth  = case filter (\as -> kind as == PowerGrid) (assets sc) of
+                             (p:_) -> health p
+                             _     -> 100.0
+                effectiveI = if kind a == Communication && pHealth < 30.0 
+                             then intensityVal * 3.0 
+                             else intensityVal
+                newH     = health a * (r ** (effectiveI / 300.0))
             in a { health = max 0.0 newH }
         newAssets = map updateAsset (assets sc)
     in sc { assets = newAssets, hour = nextHour }

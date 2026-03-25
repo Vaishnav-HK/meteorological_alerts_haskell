@@ -11,7 +11,12 @@ data Severity = Green | Yellow | Orange | Red
     deriving (Show, Eq, Ord, Enum, Bounded, Generic)
 
 -- | Infrastructure categories
-data AssetType = Hospital | PowerGrid | TransitHub | Residential
+data AssetType
+    = Hospital
+    | PowerGrid
+    | TransitHub
+    | Residential
+    | Communication
     deriving (Show, Eq, Generic)
 
 -- | An Asset has a type and a current health percentage
@@ -31,13 +36,14 @@ data Scenario = Scenario {
 } deriving (Show, Eq, Generic)
 
 -- | A single time-step point in the degradation trajectory
-data TrajectoryPoint = TrajectoryPoint {
-    tpHour        :: Int,
-    tpHospital    :: Double,
-    tpPowerGrid   :: Double,
-    tpTransitHub  :: Double,
-    tpResidential :: Double
-} deriving (Show, Eq, Generic)
+data TrajectoryPoint = TrajectoryPoint
+    { tpHour        :: Int
+    , tpHospital    :: Double
+    , tpPowerGrid   :: Double
+    , tpTransitHub  :: Double
+    , tpResidential :: Double
+    , tpCommunication :: Double
+    } deriving (Show, Eq, Generic)
 
 -- | The full 13-point trajectory response for all four assets
 data TrajectoryResponse = TrajectoryResponse {
@@ -45,7 +51,8 @@ data TrajectoryResponse = TrajectoryResponse {
     trThreat     :: Severity,
     trIntensity  :: String,
     trEvent      :: String,
-    trTrajectory :: [TrajectoryPoint]
+    trTrajectory :: [TrajectoryPoint],
+    trOverrideTrajectory :: Maybe [TrajectoryPoint]
 } deriving (Show, Eq, Generic)
 
 -- This "Glue" automatically creates ToJSON and FromJSON instances

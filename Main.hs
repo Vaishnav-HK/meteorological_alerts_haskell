@@ -16,11 +16,14 @@ import qualified Data.ByteString.Lazy as BL
 import qualified Data.Vector as V
 import Control.Monad.IO.Class (liftIO)
 import Data.Char (toLower)
-import Data.List (nub, zipWith5)
+import Data.List (nub, zipWith5, zipWith6)
 
 -- Define the Servant API
 type API = "simulate"   :> Capture "district" String :> Get '[JSON] Scenario
-      :<|> "trajectory" :> Capture "district" String :> Get '[JSON] TrajectoryResponse
+      :<|> "trajectory" :> Capture "district" String 
+                        :> QueryParam "overrideOrigin" Int 
+                        :> QueryParam "overrideIntensity" Double 
+                        :> Get '[JSON] TrajectoryResponse
       :<|> "districts"  :> Get '[JSON] [String]
 
 api :: Proxy API
@@ -42,27 +45,40 @@ loadIMDData path = do
             return scenarios
 
 -- | Build the full 13-point TrajectoryResponse for a matched Scenario
-buildTrajectory :: Scenario -> TrajectoryResponse
-buildTrajectory sc =
+buildTrajectory :: Scenario -> Maybe Int -> Maybe Double -> TrajectoryResponse
+buildTrajectory sc mOrigin mIntensity =
     let intensityVal  = parseIntensity (intensity sc)
         hPoints       = trajectoryFor Hospital    intensityVal
         pPoints       = trajectoryFor PowerGrid   intensityVal
         tPoints       = trajectoryFor TransitHub  intensityVal
         rPoints       = trajectoryFor Residential intensityVal
-        mkPoint i h p t r = TrajectoryPoint
-            { tpHour        = i
-            , tpHospital    = h
-            , tpPowerGrid   = p
-            , tpTransitHub  = t
-            , tpResidential = r
+        cPoints       = communicationTrajectory intensityVal pPoints
+        mkPoint i h p t r c = TrajectoryPoint
+            { tpHour          = i
+            , tpHospital      = h
+            , tpPowerGrid     = p
+            , tpTransitHub    = t
+            , tpResidential   = r
+            , tpCommunication = c
             }
-        trajectory = zipWith5 mkPoint [0..12] hPoints pPoints tPoints rPoints
+        trajectory = zipWith6 mkPoint [0..12] hPoints pPoints tPoints rPoints cPoints
+        
+        mOverrideTrajectory = case (mOrigin, mIntensity) of
+            (Just oTime, Just oInt) -> 
+                let hO = trajectoryWithOverride Hospital intensityVal oTime oInt
+                    pO = trajectoryWithOverride PowerGrid intensityVal oTime oInt
+                    tO = trajectoryWithOverride TransitHub intensityVal oTime oInt
+                    rO = trajectoryWithOverride Residential intensityVal oTime oInt
+                    cO = communicationTrajectoryWithOverride intensityVal oTime oInt pO
+                in Just (zipWith6 mkPoint [0..12] hO pO tO rO cO)
+            _ -> Nothing
     in TrajectoryResponse
         { trDistrict   = districtName sc
         , trThreat     = threat sc
         , trIntensity  = intensity sc
         , trEvent      = event sc
         , trTrajectory = trajectory
+        , trOverrideTrajectory = mOverrideTrajectory
         }
 
 -- Handlers
@@ -74,11 +90,11 @@ simulateHandler scenarios district =
             let finalScenario = simulate 12 s
             in return $ finalScenario { narrative = generateNarrative finalScenario }
 
-trajectoryHandler :: [Scenario] -> String -> Handler TrajectoryResponse
-trajectoryHandler scenarios district =
+trajectoryHandler :: [Scenario] -> String -> Maybe Int -> Maybe Double -> Handler TrajectoryResponse
+trajectoryHandler scenarios district mOrigin mIntensity =
     case filter (\s -> map toLower (districtName s) == map toLower district) scenarios of
         [] -> throwError err404 { errBody = "District not found" }
-        (s:_) -> return $ buildTrajectory s
+        (s:_) -> return $ buildTrajectory s mOrigin mIntensity
 
 districtsHandler :: [Scenario] -> Handler [String]
 districtsHandler scenarios = return $ nub $ map districtName scenarios
