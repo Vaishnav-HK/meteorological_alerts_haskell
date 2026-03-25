@@ -15,6 +15,22 @@ export interface Scenario {
   hour: number;
 }
 
+export interface TrajectoryPoint {
+  tpHour: number;
+  tpHospital: number;
+  tpPowerGrid: number;
+  tpTransitHub: number;
+  tpResidential: number;
+}
+
+export interface TrajectoryResponse {
+  trDistrict: string;
+  trThreat: string;
+  trIntensity: string;
+  trEvent: string;
+  trTrajectory: TrajectoryPoint[];
+}
+
 export function useSimulation(district: string) {
   const [data, setData] = useState<Scenario | null>(null);
   const [loading, setLoading] = useState(false);
@@ -58,6 +74,41 @@ export function useSimulation(district: string) {
   }, [district]);
 
   return { data, loading, error };
+}
+
+export function useTrajectory(district: string) {
+  const [trajectory, setTrajectory] = useState<TrajectoryResponse | null>(null);
+  const [loadingTrajectory, setLoadingTrajectory] = useState(false);
+
+  useEffect(() => {
+    if (!district) {
+      setTrajectory(null);
+      return;
+    }
+
+    let isMounted = true;
+    setLoadingTrajectory(true);
+    setTrajectory(null);
+
+    fetch(`http://localhost:8080/trajectory/${encodeURIComponent(district)}`)
+      .then(res => {
+        if (!res.ok) throw new Error("Trajectory fetch failed");
+        return res.json();
+      })
+      .then(json => {
+        if (isMounted) {
+          setTrajectory(json);
+          setLoadingTrajectory(false);
+        }
+      })
+      .catch(() => {
+        if (isMounted) setLoadingTrajectory(false);
+      });
+
+    return () => { isMounted = false; };
+  }, [district]);
+
+  return { trajectory, loadingTrajectory };
 }
 
 export function useDistricts() {

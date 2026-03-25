@@ -2,25 +2,48 @@ module Classifier where
 
 import Types
 
--- | Logic-Based Framework: Defines how Severity erodes Asset Health
--- This is where domain expertise is encoded into the code.
-getDecayRate :: AssetType -> Severity -> Double
-getDecayRate Hospital Red    = 1.5   -- Reinforced infrastructure
-getDecayRate PowerGrid Red   = 22.0  -- High vulnerability to storms
-getDecayRate TransitHub Red  = 14.0
-getDecayRate Residential Red = 9.0
-getDecayRate _ Orange        = 5.0   -- Moderate decay
-getDecayRate _ Yellow        = 1.0   -- Minor decay
-getDecayRate _ Green         = 0.0
+-- | Asset-specific Resilience Factor (R).
+-- Encodes domain expertise: the higher R, the shallower the decay curve.
+resilienceCoefficient :: AssetType -> Double
+resilienceCoefficient Hospital    = 0.98  -- Reinforced; high redundancy
+resilienceCoefficient Residential = 0.85  -- Standard urban decay
+resilienceCoefficient TransitHub  = 0.75  -- Vulnerable to flooding/congestion
+resilienceCoefficient PowerGrid   = 0.65  -- Critical sensitivity; steepest curve
 
--- | Advances the city state by 1 hour
+-- | Parse the intensity string to a numeric value.
+-- Defaults to 150 (mid-range) if unparseable.
+parseIntensity :: String -> Double
+parseIntensity s = case reads s of
+    [(n, "")] -> n
+    _         -> 150.0
+
+-- | Compute health at step t using the divergent-decay model:
+--   Health(t) = 100 * R ^ (t * Intensity / 300)
+-- This is equivalent to the recursive definition but computed directly
+-- for efficiency in trajectory generation.
+healthAt :: AssetType -> Double -> Int -> Double
+healthAt assetType intensityVal t =
+    let r     = resilienceCoefficient assetType
+        decay = r ** (fromIntegral t * intensityVal / 300.0)
+    in max 0.0 (100.0 * decay)
+
+-- | Build the 13-point (T+0 to T+12) trajectory for one asset type.
+trajectoryFor :: AssetType -> Double -> [Double]
+trajectoryFor assetType intensityVal =
+    map (healthAt assetType intensityVal) [0..12]
+
+-- | Recursive simulation for N hours (kept for the existing /simulate endpoint)
 tick :: Scenario -> Scenario
-tick sc = 
-    let updateAsset a = a { health = max 0 (health a - getDecayRate (kind a) (threat sc)) }
+tick sc =
+    let intensityVal  = parseIntensity (intensity sc)
+        nextHour      = hour sc + 1
+        updateAsset a =
+            let r        = resilienceCoefficient (kind a)
+                newH     = health a * (r ** (intensityVal / 300.0))
+            in a { health = max 0.0 newH }
         newAssets = map updateAsset (assets sc)
-    in sc { assets = newAssets, hour = hour sc + 1 }
+    in sc { assets = newAssets, hour = nextHour }
 
--- | Recursive simulation for N hours
 simulate :: Int -> Scenario -> Scenario
 simulate 0 sc = sc
 simulate n sc = simulate (n - 1) (tick sc)
@@ -32,7 +55,7 @@ getProtocol sc
     | avgHealth < 65 = "WARNING: Partial Transit Shutdown & Grid Load Shedding."
     | avgHealth < 85 = "ADVISORY: Monitor Localized Flooding/Infrastructure Stress."
     | otherwise      = "STABLE: Standard Monitoring Protocols."
-    where 
+    where
         avgHealth = sum (map health (assets sc)) / fromIntegral (length (assets sc))
 
 -- | Dynamic Physical Narrative

@@ -1,25 +1,64 @@
 import React, { useState } from 'react';
-import { useSimulation, useDistricts, type Scenario } from './useSimulation';
+import { useSimulation, useDistricts, useTrajectory, type Scenario, type TrajectoryPoint } from './useSimulation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import { ShieldAlert, Play, Clock, ArrowRight, ChevronDown, Activity, Info, CheckCircle2, Loader2 } from 'lucide-react';
 import LogicModal, { type FeedItem } from './LogicInspector';
 
-const emptyChartData = Array.from({ length: 13 }, (_, i) => ({ hour: `${i}h`, Average: 100 }));
+// ── Asset colour constants ────────────────────────────────────────────────────
+const ASSET_COLORS = {
+  Hospital:    '#10b981', // Emerald Green
+  PowerGrid:   '#1e293b', // Dark Obsidian/Blue
+  TransitHub:  '#f59e0b', // Amber/Orange
+  Residential: '#94a3b8', // Slate Gray
+} as const;
+
+// ── Empty state helpers ───────────────────────────────────────────────────────
+const emptyChartData = Array.from({ length: 13 }, (_, i) => ({
+  hour: `${i}h`,
+  Hospital: 100, PowerGrid: 100, TransitHub: 100, Residential: 100, Average: 100,
+}));
+
 const emptyAssets = [
-  { kind: 'PowerGrid', health: 100 },
-  { kind: 'TransitHub', health: 100 },
-  { kind: 'Hospital', health: 100 },
-  { kind: 'Residential', health: 100 }
+  { kind: 'PowerGrid',   health: 100 },
+  { kind: 'TransitHub',  health: 100 },
+  { kind: 'Hospital',    health: 100 },
+  { kind: 'Residential', health: 100 },
 ];
 
+// ── Build chart data from the 13-point trajectory (divergent decay) ───────────
+function buildChartData(points: TrajectoryPoint[]) {
+  return points.map(p => ({
+    hour:        `${p.tpHour}h`,
+    Hospital:    +p.tpHospital.toFixed(2),
+    PowerGrid:   +p.tpPowerGrid.toFixed(2),
+    TransitHub:  +p.tpTransitHub.toFixed(2),
+    Residential: +p.tpResidential.toFixed(2),
+    Average:     +((p.tpHospital + p.tpPowerGrid + p.tpTransitHub + p.tpResidential) / 4).toFixed(2),
+  }));
+}
+
+// ── Get per-asset health at a given hour from the trajectory ──────────────────
+function getAssetHealthAt(points: TrajectoryPoint[], kind: string, hourIndex: number): number {
+  const clamp = Math.min(Math.max(hourIndex, 0), 12);
+  const pt = points[clamp];
+  if (!pt) return 100;
+  if (kind === 'Hospital')    return pt.tpHospital;
+  if (kind === 'PowerGrid')   return pt.tpPowerGrid;
+  if (kind === 'TransitHub')  return pt.tpTransitHub;
+  if (kind === 'Residential') return pt.tpResidential;
+  return 100;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 const Dashboard = () => {
   const [activeDistrict, setActiveDistrict] = useState('');
   const [activeHour, setActiveHour] = useState(0);
   const [openModal, setOpenModal] = useState<FeedItem | null>(null); 
   const [protocolState, setProtocolState] = useState<'idle' | 'dispatching' | 'sent'>('idle');
   const { data, loading, error } = useSimulation(activeDistrict);
-  const { districts } = useDistricts();
+  const { trajectory }           = useTrajectory(activeDistrict);
+  const { districts }            = useDistricts();
 
   const handleSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const val = e.target.value;
@@ -48,31 +87,31 @@ const Dashboard = () => {
 
   const getHeroGlow = (threat?: string) => {
     switch (threat) {
-      case 'Red': return 'bg-apple-red/5 border-apple-red/20';
+      case 'Red':    return 'bg-apple-red/5 border-apple-red/20';
       case 'Orange': return 'bg-apple-orange/5 border-apple-orange/20';
       case 'Yellow': return 'bg-apple-yellow/5 border-apple-yellow/20';
-      case 'Green': return 'bg-apple-green/5 border-apple-green/20';
-      default: return 'bg-gray-50 border-gray-200';
+      case 'Green':  return 'bg-apple-green/5 border-apple-green/20';
+      default:       return 'bg-gray-50 border-gray-200';
     }
   };
 
   const getThreatColor = (threat?: string) => {
     switch (threat) {
-      case 'Red': return 'border-apple-red shadow-apple-red/20 text-apple-red';
+      case 'Red':    return 'border-apple-red shadow-apple-red/20 text-apple-red';
       case 'Orange': return 'border-apple-orange shadow-apple-orange/20 text-apple-orange';
       case 'Yellow': return 'border-apple-yellow shadow-apple-yellow/20 text-apple-yellow';
-      case 'Green': return 'border-apple-green shadow-apple-green/20 text-apple-green';
-      default: return 'border-gray-200 text-gray-400';
+      case 'Green':  return 'border-apple-green shadow-apple-green/20 text-apple-green';
+      default:       return 'border-gray-200 text-gray-400';
     }
   };
 
   const getDecayTint = (threat?: string) => {
     if (activeHour <= 6) return 'bg-transparent';
     switch (threat) {
-      case 'Red': return 'bg-apple-red/10 rounded-xl scale-[1.02] shadow-sm -translate-y-1';
+      case 'Red':    return 'bg-apple-red/10 rounded-xl scale-[1.02] shadow-sm -translate-y-1';
       case 'Orange': return 'bg-apple-orange/10 rounded-xl scale-[1.02] shadow-sm -translate-y-1';
       case 'Yellow': return 'bg-apple-yellow/10 rounded-xl scale-[1.02] shadow-sm -translate-y-1';
-      default: return 'bg-transparent';
+      default:       return 'bg-transparent';
     }
   };
 
@@ -88,41 +127,34 @@ const Dashboard = () => {
     return '[Nominal Capacity]';
   };
 
-  const getSimulatedHealth = (finalHealth: number) => {
+  // Resolve current displayed health for an asset at the active hour
+  // Uses trajectory data if available (divergent decay), otherwise falls back to linear interpolation
+  const getDisplayHealth = (assetKind: string, finalHealth: number): number => {
+    if (trajectory?.trTrajectory?.length) {
+      return getAssetHealthAt(trajectory.trTrajectory, assetKind, activeHour);
+    }
+    // Fallback: linear interpolation from final health
     return 100 - (activeHour * ((100 - finalHealth) / 12));
   };
 
-  const calculateGlobalScore = (scenario?: Scenario) => {
-    if (!scenario || !scenario.assets.length) return 100;
-    const total = scenario.assets.reduce((acc, a) => acc + getSimulatedHealth(a.health), 0);
+  const calculateGlobalScore = (scenario?: Scenario): string => {
+    if (!scenario || !scenario.assets.length) return '100';
+    const total = scenario.assets.reduce((acc, a) => acc + getDisplayHealth(a.kind, a.health), 0);
     return (total / scenario.assets.length).toFixed(1);
   };
 
   const getTooltipText = (scenario?: Scenario) => {
     if (!scenario || !scenario.assets.length) return "Awaiting simulation data.";
-    const getH = (k: string) => getSimulatedHealth(scenario.assets.find(a => a.kind === k)?.health || 100).toFixed(0);
-    return `Calculated average of current 12-hour projected health across all mapped assets (H=${getH('Hospital')}%, P=${getH('PowerGrid')}%, T=${getH('TransitHub')}%, R=${getH('Residential')}%).`;
+    const getH = (k: string) => getDisplayHealth(k, scenario.assets.find(a => a.kind === k)?.health || 100).toFixed(0);
+    return `Calculated average of current projected health across all mapped assets (H=${getH('Hospital')}%, P=${getH('PowerGrid')}%, T=${getH('TransitHub')}%, R=${getH('Residential')}%).`;
   };
 
-  const generateChartData = (scenario?: Scenario) => {
-    if (!scenario) return emptyChartData;
-    return Array.from({ length: 13 }, (_, hour) => {
-      const point: any = { hour: `${hour}h` };
-      let totalHealth = 0;
-      scenario.assets.forEach(asset => {
-        const initial = 100;
-        const currentParams = initial - ((initial - asset.health) * (hour / 12));
-        point[asset.kind] = Math.max(0, currentParams);
-        totalHealth += point[asset.kind];
-      });
-      point['Average'] = totalHealth / scenario.assets.length;
-      return point;
-    });
-  };
+  const isBlank  = !activeDistrict || !data;
+  const chartData = (trajectory?.trTrajectory?.length)
+    ? buildChartData(trajectory.trTrajectory)
+    : isBlank ? emptyChartData : emptyChartData;
 
-  const isBlank = !activeDistrict || !data;
-  const chartData = isBlank ? emptyChartData : generateChartData(data!);
-  const globalScore = isBlank ? "--" : calculateGlobalScore(data!);
+  const globalScore   = isBlank ? "--" : calculateGlobalScore(data!);
   const displayAssets = isBlank ? emptyAssets : data!.assets;
 
   return (
@@ -217,15 +249,15 @@ const Dashboard = () => {
                 disabled={isBlank || protocolState === 'sent'} 
                 onClick={handleExecuteProtocol}
                 className={`w-full flex items-center justify-center gap-2 font-medium py-2.5 rounded-xl text-sm transition-all duration-300 ${
-                  protocolState === 'sent' ? 'bg-emerald-500 text-white shadow-emerald-500/20 shadow-lg' : 
+                  protocolState === 'sent'        ? 'bg-emerald-500 text-white shadow-emerald-500/20 shadow-lg' : 
                   protocolState === 'dispatching' ? 'bg-gray-800 text-gray-200' :
-                  isBlank ? 'bg-gray-300 text-white cursor-not-allowed' :
+                  isBlank                         ? 'bg-gray-300 text-white cursor-not-allowed' :
                   'bg-gray-900 text-white hover:scale-[1.02] active:scale-95 shadow-md'
                 }`}
               >
-                {protocolState === 'idle' && <>Execute Protocol <ArrowRight className="w-4 h-4"/></>}
+                {protocolState === 'idle'        && <>Execute Protocol <ArrowRight className="w-4 h-4"/></>}
                 {protocolState === 'dispatching' && <><Loader2 className="w-4 h-4 animate-spin"/> DISPATCHING...</>}
-                {protocolState === 'sent' && <><CheckCircle2 className="w-4 h-4"/> PROTOCOL SENT</>}
+                {protocolState === 'sent'        && <><CheckCircle2 className="w-4 h-4"/> PROTOCOL SENT</>}
               </button>
             </div>
           </div>
@@ -241,11 +273,18 @@ const Dashboard = () => {
               </div>
               <div className="flex flex-col gap-6">
                 {displayAssets.map((asset) => {
-                  const currentH = getSimulatedHealth(asset.health);
+                  const currentH = getDisplayHealth(asset.kind, asset.health);
+                  const assetColor = ASSET_COLORS[asset.kind as keyof typeof ASSET_COLORS];
                   return (
                     <div key={asset.kind} className="flex flex-col gap-2">
                       <div className="flex justify-between items-center text-[15px] font-medium text-gray-800 gap-4">
-                        <span className="shrink-0">{asset.kind}</span>
+                        <span className="shrink-0 flex items-center gap-2">
+                          <span
+                            className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
+                            style={{ backgroundColor: assetColor ?? '#94a3b8' }}
+                          />
+                          {asset.kind}
+                        </span>
                         <div className="flex items-center justify-end gap-3 flex-1 text-right">
                           <span className="text-gray-500 text-xs font-normal whitespace-nowrap">{getDeskriptiveTag(currentH)}</span>
                           <span className="w-12 text-right shrink-0">{currentH.toFixed(1)}%</span>
@@ -259,13 +298,14 @@ const Dashboard = () => {
                         />
                       </div>
                     </div>
-                  )
+                  );
                 })}
               </div>
             </div>
 
+            {/* Degradation Trajectory & Scrubber */}
             <div className={`bg-white/70 backdrop-blur-md rounded-3xl p-8 shadow-sm border border-white/20 h-[380px] flex flex-col transition-all duration-500 ${isBlank ? 'opacity-40 blur-[3px] pointer-events-none' : ''}`}>
-              <h3 className="text-lg font-medium mb-4 text-gray-900">Degradation Trajectory & Scrubber</h3>
+              <h3 className="text-lg font-medium mb-4 text-gray-900">Degradation Trajectory &amp; Scrubber</h3>
               
               <div className="flex-1 -ml-4 mb-2">
                 <ResponsiveContainer width="100%" height="100%">
@@ -278,11 +318,15 @@ const Dashboard = () => {
                       labelStyle={{ fontWeight: 600, color: '#0f172a', marginBottom: '8px' }}
                     />
                     {!isBlank && <ReferenceLine x={`${activeHour}h`} stroke="#94a3b8" strokeWidth={1} strokeDasharray="4 4" />}
-                    <Line type="monotone" dataKey="Average" stroke={isBlank ? "#cbd5e1" : "#0f172a"} strokeWidth={3} dot={false} strokeLinecap="round" />
-                    {!isBlank && data?.assets.some(a => a.kind === 'Hospital') && <Line type="monotone" dataKey="Hospital" stroke="#84cc16" strokeWidth={2} strokeOpacity={0.7} dot={false} />}
-                    {!isBlank && data?.assets.some(a => a.kind === 'PowerGrid') && <Line type="monotone" dataKey="PowerGrid" stroke="#64748b" strokeWidth={2} strokeOpacity={0.7} dot={false} />}
-                    {!isBlank && data?.assets.some(a => a.kind === 'TransitHub') && <Line type="monotone" dataKey="TransitHub" stroke="#f59e0b" strokeWidth={2} strokeOpacity={0.7} dot={false} />}
-                    {!isBlank && data?.assets.some(a => a.kind === 'Residential') && <Line type="monotone" dataKey="Residential" stroke="#d1d5db" strokeWidth={2} strokeOpacity={0.7} dot={false} />}
+
+                    {/* Hospital — Emerald Green — shallowest curve */}
+                    <Line type="monotone" dataKey="Hospital"    stroke={ASSET_COLORS.Hospital}    strokeWidth={2.5} dot={false} strokeLinecap="round" strokeOpacity={isBlank ? 0.3 : 0.9} />
+                    {/* Residential — Slate Gray */}
+                    <Line type="monotone" dataKey="Residential" stroke={ASSET_COLORS.Residential} strokeWidth={2}   dot={false} strokeLinecap="round" strokeOpacity={isBlank ? 0.3 : 0.85} />
+                    {/* TransitHub — Amber/Orange */}
+                    <Line type="monotone" dataKey="TransitHub"  stroke={ASSET_COLORS.TransitHub}  strokeWidth={2}   dot={false} strokeLinecap="round" strokeOpacity={isBlank ? 0.3 : 0.85} />
+                    {/* PowerGrid — Dark Obsidian/Blue — steepest curve */}
+                    <Line type="monotone" dataKey="PowerGrid"   stroke={ASSET_COLORS.PowerGrid}   strokeWidth={2.5} dot={false} strokeLinecap="round" strokeOpacity={isBlank ? 0.3 : 0.9} />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -309,12 +353,12 @@ const Dashboard = () => {
                 />
               </div>
 
-              {/* Custom Legend */}
+              {/* Custom Legend — fanned out order, top to bottom: Hospital, Residential, TransitHub, PowerGrid */}
               <div className={`flex justify-end gap-3 mt-4 text-[10px] text-gray-500 font-medium uppercase tracking-wider pr-4 transition-opacity ${isBlank ? 'opacity-0' : 'opacity-100'}`}>
-                <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-[#84cc16]"></div>Hospital</div>
-                <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-[#64748b]"></div>Power</div>
-                <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-[#f59e0b]"></div>Transit</div>
-                <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-[#d1d5db]"></div>Residential</div>
+                <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full" style={{ backgroundColor: ASSET_COLORS.Hospital }}></div>Hospital</div>
+                <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full" style={{ backgroundColor: ASSET_COLORS.Residential }}></div>Residential</div>
+                <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full" style={{ backgroundColor: ASSET_COLORS.TransitHub }}></div>Transit</div>
+                <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full" style={{ backgroundColor: ASSET_COLORS.PowerGrid }}></div>Power</div>
               </div>
 
             </div>
@@ -363,7 +407,7 @@ const Dashboard = () => {
                     <div className="absolute w-3 h-3 bg-white border-2 border-amber-500 rounded-full -left-[6.5px] top-1.5"></div>
                     <div className="text-xs font-semibold text-gray-400 mb-1">4h - T+4.00</div>
                     <div className="text-[15px] font-medium text-gray-800 leading-snug">
-                      Sector analysis indicates severe stress geometry loading up on structural and power grids.
+                      Divergent decay curves emerging. Power Grid health critically separating from Hospital resilience.
                     </div>
                     <button onClick={() => setOpenModal('4h')} className="mt-2 text-[10px] uppercase tracking-widest font-semibold text-[#6a4b9a] hover:text-[#8a6ab5] flex items-center gap-1 transition-colors">
                       <span>⌥</span> View Haskell Logic

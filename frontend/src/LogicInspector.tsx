@@ -17,51 +17,45 @@ interface Snippet { label: string; lines: SnippetLine[] }
 export type FeedItem = '0h' | '4h' | '12h';
 
 function getSnippet(item: FeedItem, threat?: string, event?: string): Snippet {
-  const isCritical = threat === 'Red' || threat === 'Orange';
-
   if (item === '0h') {
     return {
       label: 'Initial Alert — generateNarrative',
       lines: [
         { code: 'generateNarrative :: Scenario -> String' },
-        { code: 'generateNarrative s' },
-        { code: `  | threat s == ${isCritical ? 'Critical' : 'High'} && event s == "${event ?? 'Rainfall'}"`, hot: true },
-        { code: `      = "Alert Active: anomalous ${event ?? 'rainfall'} detected over " ++ districtName s`, hot: true },
-        { code: '  | otherwise' },
-        { code: '      = "Monitoring standard conditions."' },
+        { code: 'generateNarrative sc = case (event sc, threat sc) of' },
+        { code: `    ("${event ?? 'Rainfall'}", Red) -> "Critical ${event ?? 'rainfall'} is overwhelming " ++ ...`, hot: true },
+        { code: '    ("Cyclone", _)    -> "High-velocity cyclonic winds are actively ..." ' },
+        { code: '    _                 -> "Localized " ++ event sc ++ " events observed."' },
       ]
     };
   }
 
   if (item === '4h') {
     return {
-      label: '4h Stress — getDecayRate (PowerGrid)',
+      label: '4h Resilience — resilienceCoefficient',
       lines: [
-        { code: 'getDecayRate :: Asset -> Severity -> Double' },
-        { code: 'getDecayRate PowerGrid  Critical = 8.5', hot: isCritical },
-        { code: 'getDecayRate PowerGrid  High     = 4.5', hot: !isCritical },
-        { code: 'getDecayRate TransitHub Critical = 9.2' },
-        { code: 'getDecayRate Hospital   Critical = 3.1' },
+        { code: 'resilienceCoefficient :: AssetType -> Double' },
+        { code: 'resilienceCoefficient Hospital    = 0.98' },
+        { code: 'resilienceCoefficient Residential = 0.85' },
+        { code: 'resilienceCoefficient TransitHub  = 0.75' },
+        { code: 'resilienceCoefficient PowerGrid   = 0.65', hot: true },
         { code: '' },
-        { code: '-- Applied at T+4h via tick:' },
-        { code: 'tick s = s { assets = map (decay (getSeverity s)) (assets s)', hot: true },
-        { code: '           , hour  = hour s + 1 }', hot: true },
+        { code: '-- Recursive Health Step:' },
+        { code: 'Health(t) = Health(t-1) * (R ^ (Intensity / 300))', hot: true },
       ]
     };
   }
 
   // 12h
   return {
-    label: '12h Failure — simulate convergence',
+    label: '12h Convergence — Trajectory Build',
     lines: [
-      { code: 'simulate :: Int -> Scenario -> Scenario' },
-      { code: 'simulate 0 s = s' },
-      { code: 'simulate n s = simulate (n-1) (tick s)', hot: true },
-      { code: '' },
-      { code: '-- Final state injected into API response:' },
-      { code: 'simulateHandler scenarios district = do' },
-      { code: '  let final = simulate 12 matched', hot: true },
-      { code: '  return $ final { narrative = generateNarrative final }', hot: true },
+      { code: 'buildTrajectory :: Scenario -> TrajectoryResponse' },
+      { code: 'buildTrajectory sc =' },
+      { code: '    let intensityVal = parseIntensity (intensity sc)' },
+      { code: '        pPoints      = trajectoryFor PowerGrid intensityVal', hot: true },
+      { code: '        trajectory   = zipWith4 mkPoint [0..12] hPoints pPoints ...', hot: true },
+      { code: '    in TrajectoryResponse { trTrajectory = trajectory, ... }' },
     ]
   };
 }
