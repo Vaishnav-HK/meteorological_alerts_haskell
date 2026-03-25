@@ -3,7 +3,7 @@ import { useSimulation, useDistricts, useTrajectory, type Scenario, type Traject
 import { motion, AnimatePresence } from 'framer-motion';
 import { LineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import { ShieldAlert, Play, Clock, ArrowRight, ChevronDown, Activity, Info, CheckCircle2, Loader2 } from 'lucide-react';
-import LogicModal, { type FeedItem } from './LogicInspector';
+import LogicModal from './LogicInspector';
 
 // ── Asset colour constants ────────────────────────────────────────────────────
 const ASSET_COLORS = {
@@ -72,6 +72,13 @@ const Dashboard = () => {
   const [debouncedIntensity, setDebouncedIntensity] = useState(150);
   const [overrideOrigin, setOverrideOrigin] = useState(0);
 
+  const ASSET_KEYS = ['Hospital', 'PowerGrid', 'TransitHub', 'Residential', 'Communication'] as const;
+  type AssetKey = typeof ASSET_KEYS[number];
+  const [resilienceOffsets, setResilienceOffsets] = useState<Record<AssetKey, number>>(
+    { Hospital: 0, PowerGrid: 0, TransitHub: 0, Residential: 0, Communication: 0 }
+  );
+  const [debouncedOffsets, setDebouncedOffsets] = useState(resilienceOffsets);
+
   useEffect(() => {
     const handler = setTimeout(() => {
       setDebouncedIntensity(overrideIntensity);
@@ -79,11 +86,21 @@ const Dashboard = () => {
     return () => clearTimeout(handler);
   }, [overrideIntensity]);
 
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedOffsets(resilienceOffsets);
+    }, 100);
+    return () => clearTimeout(handler);
+  }, [resilienceOffsets]);
+
+  const hasOffsets = Object.values(debouncedOffsets).some(v => v !== 0);
+
   const { data, loading, error } = useSimulation(activeDistrict);
   const { trajectory }           = useTrajectory(
     activeDistrict,
     overrideActive ? overrideOrigin : undefined,
-    overrideActive ? debouncedIntensity : undefined
+    overrideActive ? debouncedIntensity : undefined,
+    hasOffsets ? debouncedOffsets : undefined
   );
   const { districts }            = useDistricts();
 
@@ -156,15 +173,14 @@ const Dashboard = () => {
   };
 
   // Resolve current displayed health for an asset at the active hour
-  // Uses trajectory data if available (divergent decay), otherwise falls back to linear interpolation
   const getDisplayHealth = (assetKind: string, finalHealth: number): number => {
-    if (trajectory?.trOverrideTrajectory?.length && activeHour >= overrideOrigin) {
+    const hasAnyOverride = overrideActive || hasOffsets;
+    if (hasAnyOverride && trajectory?.trOverrideTrajectory?.length && activeHour >= overrideOrigin) {
       return getAssetHealthAt(trajectory.trOverrideTrajectory, assetKind, activeHour);
     }
     if (trajectory?.trTrajectory?.length) {
       return getAssetHealthAt(trajectory.trTrajectory, assetKind, activeHour);
     }
-    // Fallback: linear interpolation from final health
     return 100 - (activeHour * ((100 - finalHealth) / 12));
   };
 
@@ -302,12 +318,17 @@ const Dashboard = () => {
                   <Play className="w-3.5 h-3.5" /> Play Simulation
                 </button>
               </div>
-              <div className="flex flex-col gap-6">
+              <div className="flex flex-col gap-5">
                 {displayAssets.map((asset) => {
                   const currentH = getDisplayHealth(asset.kind, asset.health);
                   const assetColor = ASSET_COLORS[asset.kind as keyof typeof ASSET_COLORS];
+                  const offset = resilienceOffsets[asset.kind as keyof typeof resilienceOffsets] ?? 0;
+                  const pct = Math.round(offset * 100);
+                  const isNeg = pct < 0;
+                  const isPos = pct > 0;
                   return (
-                    <div key={asset.kind} className="flex flex-col gap-2">
+                    <div key={asset.kind} className="flex flex-col gap-1.5">
+                      {/* Asset title row */}
                       <div className="flex justify-between items-center text-[15px] font-medium text-gray-800 gap-4">
                         <span className="shrink-0 flex items-center gap-2">
                           <span
@@ -321,12 +342,42 @@ const Dashboard = () => {
                           <span className="w-12 text-right shrink-0">{currentH.toFixed(1)}%</span>
                         </div>
                       </div>
-                      <div className="h-4 w-full bg-slate-100 shadow-inner rounded-full overflow-hidden">
+                      {/* Health bar */}
+                      <div className="h-3 w-full bg-slate-100 shadow-inner rounded-full overflow-hidden">
                         <motion.div 
                           animate={{ width: `${currentH}%` }}
                           transition={{ type: "spring", bounce: 0, duration: 0.5 }}
                           className={`h-full rounded-full shadow-sm ${isBlank ? 'bg-gray-300' : getSoftBarColor(currentH)}`}
                         />
+                      </div>
+                      {/* Diverging resilience slider */}
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className={`text-[10px] font-semibold w-28 shrink-0 ${
+                          isNeg ? 'text-rose-500' : isPos ? 'text-emerald-500' : 'text-gray-400'
+                        }`}>
+                          {pct === 0 ? 'Baseline' : isNeg ? `${pct}% Resilience` : `+${pct}% Hardening`}
+                        </span>
+                        <div className="flex-1 relative">
+                          <input
+                            type="range" min="-50" max="50" step="1"
+                            value={pct}
+                            disabled={isBlank}
+                            onChange={(e) => {
+                              const raw = Number(e.target.value) / 100;
+                              setResilienceOffsets(prev => ({ ...prev, [asset.kind]: raw }));
+                            }}
+                            style={{
+                              background: `linear-gradient(to right, #ef4444 0%, #e5e7eb 50%, #10b981 100%)`
+                            }}
+                            className="w-full h-1.5 rounded-full appearance-none outline-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-gray-200 [&::-webkit-slider-thumb]:hover:scale-125 [&::-webkit-slider-thumb]:transition-transform"
+                          />
+                        </div>
+                        {offset !== 0 && (
+                          <button
+                            onClick={() => setResilienceOffsets(prev => ({ ...prev, [asset.kind]: 0 }))}
+                            className="text-[9px] text-gray-400 hover:text-rose-500 font-bold uppercase shrink-0"
+                          >↺</button>
+                        )}
                       </div>
                     </div>
                   );
@@ -350,15 +401,15 @@ const Dashboard = () => {
                     />
                     {!isBlank && <ReferenceLine x={`${activeHour}h`} stroke="#94a3b8" strokeWidth={1} strokeDasharray="4 4" />}
 
-                    {/* Ghost/Original Lines -> dashed and faded if override is active */}
-                    <Line type="monotone" dataKey="Hospital"    stroke={ASSET_COLORS.Hospital}    strokeWidth={overrideActive ? 2 : 2.5} dot={false} strokeDasharray={overrideActive ? "5 5" : ""} strokeOpacity={isBlank ? 0.3 : overrideActive ? 0.3 : 0.9} strokeLinecap="round" />
-                    <Line type="monotone" dataKey="Residential" stroke={ASSET_COLORS.Residential} strokeWidth={overrideActive ? 2 : 2}   dot={false} strokeDasharray={overrideActive ? "5 5" : ""} strokeOpacity={isBlank ? 0.3 : overrideActive ? 0.3 : 0.85} strokeLinecap="round" />
-                    <Line type="monotone" dataKey="TransitHub"  stroke={ASSET_COLORS.TransitHub}  strokeWidth={overrideActive ? 2 : 2}   dot={false} strokeDasharray={overrideActive ? "5 5" : ""} strokeOpacity={isBlank ? 0.3 : overrideActive ? 0.3 : 0.85} strokeLinecap="round" />
-                    <Line type="monotone" dataKey="PowerGrid"   stroke={ASSET_COLORS.PowerGrid}   strokeWidth={overrideActive ? 2 : 2.5} dot={false} strokeDasharray={overrideActive ? "5 5" : ""} strokeOpacity={isBlank ? 0.3 : overrideActive ? 0.3 : 0.9} strokeLinecap="round" />
-                    <Line type="monotone" dataKey="Communication" stroke={ASSET_COLORS.Communication} strokeWidth={overrideActive ? 2 : 2.5} dot={false} strokeDasharray={overrideActive ? "5 5" : ""} strokeOpacity={isBlank ? 0.3 : overrideActive ? 0.3 : 0.9} strokeLinecap="round" />
+                    {/* Ghost/Original Lines -> always baseline CSV */}
+                    <Line type="monotone" dataKey="Hospital"    stroke={ASSET_COLORS.Hospital}    strokeWidth={2} dot={false} strokeDasharray={(overrideActive || hasOffsets) ? "5 5" : ""} strokeOpacity={isBlank ? 0.3 : (overrideActive || hasOffsets) ? 0.3 : 0.9} strokeLinecap="round" />
+                    <Line type="monotone" dataKey="Residential" stroke={ASSET_COLORS.Residential} strokeWidth={2} dot={false} strokeDasharray={(overrideActive || hasOffsets) ? "5 5" : ""} strokeOpacity={isBlank ? 0.3 : (overrideActive || hasOffsets) ? 0.3 : 0.85} strokeLinecap="round" />
+                    <Line type="monotone" dataKey="TransitHub"  stroke={ASSET_COLORS.TransitHub}  strokeWidth={2} dot={false} strokeDasharray={(overrideActive || hasOffsets) ? "5 5" : ""} strokeOpacity={isBlank ? 0.3 : (overrideActive || hasOffsets) ? 0.3 : 0.85} strokeLinecap="round" />
+                    <Line type="monotone" dataKey="PowerGrid"   stroke={ASSET_COLORS.PowerGrid}   strokeWidth={2} dot={false} strokeDasharray={(overrideActive || hasOffsets) ? "5 5" : ""} strokeOpacity={isBlank ? 0.3 : (overrideActive || hasOffsets) ? 0.3 : 0.9} strokeLinecap="round" />
+                    <Line type="monotone" dataKey="Communication" stroke={ASSET_COLORS.Communication} strokeWidth={2} dot={false} strokeDasharray={(overrideActive || hasOffsets) ? "5 5" : ""} strokeOpacity={isBlank ? 0.3 : (overrideActive || hasOffsets) ? 0.3 : 0.9} strokeLinecap="round" />
 
                     {/* Bold Solid Override Lines */}
-                    {(overrideActive && trajectory?.trOverrideTrajectory) && (
+                    {((overrideActive || hasOffsets) && trajectory?.trOverrideTrajectory) && (
                       <>
                         <Line type="monotone" dataKey="OHospital"    stroke={ASSET_COLORS.Hospital}    strokeWidth={3} dot={false} strokeLinecap="round" />
                         <Line type="monotone" dataKey="OResidential" stroke={ASSET_COLORS.Residential} strokeWidth={3} dot={false} strokeLinecap="round" />
@@ -413,7 +464,10 @@ const Dashboard = () => {
                         setOverrideIntensity(Number(e.target.value));
                       }}
                       disabled={isBlank}
-                      className="w-full appearance-none h-2.5 rounded-full outline-none bg-white/60 backdrop-blur-md shadow-inner transition-all border border-gray-200/50 cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:shadow-lg [&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-gray-100 [&::-webkit-slider-thumb]:hover:scale-110 [&::-webkit-slider-thumb]:transition-transform relative z-10"
+                      style={{
+                        background: `linear-gradient(to right, #60a5fa, #4f46e5)`
+                      }}
+                      className="w-full appearance-none h-2.5 rounded-full outline-none shadow-inner transition-all cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-6 [&::-webkit-slider-thumb]:h-6 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:shadow-xl [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-indigo-600 [&::-webkit-slider-thumb]:hover:scale-110 [&::-webkit-slider-thumb]:transition-transform relative z-10"
                     />
                   </div>
 
@@ -559,7 +613,11 @@ const Dashboard = () => {
             item={openModal!}
             threat={data!.threat}
             event={data!.event}
-            overrideData={overrideActive ? { intensity: overrideIntensity, origin: overrideOrigin } : undefined}
+            overrideData={{
+              intensity: overrideIntensity,
+              origin: overrideOrigin,
+              hasNegativeOffset: Object.values(resilienceOffsets).some(v => v < 0)
+            }}
             onClose={() => setOpenModal(null)}
           />
         )}

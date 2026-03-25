@@ -18,13 +18,24 @@ parseIntensity s = case reads s of
     [(n, "")] -> n
     _         -> 150.0
 
+-- | Compute the effective resilience coefficient after applying a user offset.
+-- Offset is in the range [-0.5, +0.5]. Clamped to valid decay range [0.1, 0.99].
+effectiveResilience :: AssetType -> Double -> Double
+effectiveResilience asset offset =
+    max 0.1 (min 0.99 (resilienceCoefficient asset * (1.0 + offset)))
+
 -- | Compute health at step t using the divergent-decay model:
 --   Health(t) = 100 * R ^ (t * Intensity / 300)
--- This is equivalent to the recursive definition but computed directly
--- for efficiency in trajectory generation.
 healthAt :: AssetType -> Double -> Int -> Double
 healthAt assetType intensityVal t =
     let r     = resilienceCoefficient assetType
+        decay = r ** (fromIntegral t * intensityVal / 300.0)
+    in max 0.0 (100.0 * decay)
+
+-- | Offset-aware version of healthAt.
+healthAtOffset :: AssetType -> Double -> Double -> Int -> Double
+healthAtOffset assetType intensityVal offset t =
+    let r     = effectiveResilience assetType offset
         decay = r ** (fromIntegral t * intensityVal / 300.0)
     in max 0.0 (100.0 * decay)
 
@@ -42,24 +53,29 @@ trajectoryFor :: AssetType -> Double -> [Double]
 trajectoryFor assetType intensityVal =
     map (healthAt assetType intensityVal) [0..12]
 
+-- | Offset-aware trajectory for one asset type.
+trajectoryForOffset :: AssetType -> Double -> Double -> [Double]
+trajectoryForOffset assetType intensityVal offset =
+    map (healthAtOffset assetType intensityVal offset) [0..12]
+
 -- | Build the 13-point trajectory including an override from rootT.
 trajectoryWithOverride :: AssetType -> Double -> Int -> Double -> [Double]
 trajectoryWithOverride assetType initialI rootT newI =
     map (healthWithOverride assetType initialI rootT newI) [0..12]
 
 -- | Interdependent decay models for Communication
-communicationTrajectory :: Double -> [Double] -> [Double]
-communicationTrajectory intensityVal pPoints =
-    let r = resilienceCoefficient Communication
+communicationTrajectory :: Double -> Double -> [Double] -> [Double]
+communicationTrajectory intensityVal commOffset pPoints =
+    let r = effectiveResilience Communication commOffset
         step prevHealth pHealth =
             let effectiveI = if pHealth < 30.0 then intensityVal * 3.0 else intensityVal
                 decayFactor = r ** (effectiveI / 300.0)
             in prevHealth * decayFactor
     in scanl step 100.0 (tail pPoints)
 
-communicationTrajectoryWithOverride :: Double -> Int -> Double -> [Double] -> [Double]
-communicationTrajectoryWithOverride initialI rootT newI pPoints =
-    let r = resilienceCoefficient Communication
+communicationTrajectoryWithOverride :: Double -> Int -> Double -> Double -> [Double] -> [Double]
+communicationTrajectoryWithOverride initialI rootT newI commOffset pPoints =
+    let r = effectiveResilience Communication commOffset
         step (t, prevHealth) pHealth =
             let currentI = if t > rootT then newI else initialI
                 effectiveI = if pHealth < 30.0 then currentI * 3.0 else currentI

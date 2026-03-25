@@ -119,7 +119,7 @@ interface LogicModalProps {
   item: FeedItem;
   threat?: string;
   event?: string;
-  overrideData?: { intensity: number, origin: number };
+  overrideData?: { intensity: number, origin: number, hasNegativeOffset?: boolean };
   onClose: () => void;
 }
 
@@ -187,6 +187,18 @@ export const LogicModal: React.FC<LogicModalProps> = ({ item, threat, event, ove
               <p className="text-[#c9d1d9] text-[13px] leading-relaxed font-medium">
                 <strong className="text-white block mb-0.5 mt-0.5">Branching Logic Active:</strong>
                 Recalculating future impact from <span className="text-amber-400 font-bold">T+{overrideData.origin}</span> using <span className="text-amber-400 font-bold">{overrideData.intensity}mm</span>.
+              </p>
+            </div>
+          )}
+          {/* Vulnerability Injection Alert */}
+          {overrideData?.hasNegativeOffset && (
+            <div className="px-5 py-3 bg-[#1f2937] border-b border-[#30363d] flex items-center gap-3 border-l-4 border-l-rose-500">
+              <div className="p-1.5 rounded-full bg-rose-500/20 text-rose-400 shrink-0">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              </div>
+              <p className="text-[#c9d1d9] text-[13px] leading-relaxed font-medium">
+                <strong className="text-rose-300 block mb-0.5 mt-0.5">Vulnerability Injection:</strong>
+                Asset resilience reduced due to simulated maintenance deficit. Accelerating failure vectors.
               </p>
             </div>
           )}

@@ -21,8 +21,13 @@ import Data.List (nub, zipWith5, zipWith6)
 -- Define the Servant API
 type API = "simulate"   :> Capture "district" String :> Get '[JSON] Scenario
       :<|> "trajectory" :> Capture "district" String 
-                        :> QueryParam "overrideOrigin" Int 
+                        :> QueryParam "overrideOrigin"    Int 
                         :> QueryParam "overrideIntensity" Double 
+                        :> QueryParam "hoOffset"          Double
+                        :> QueryParam "pgOffset"          Double
+                        :> QueryParam "thOffset"          Double
+                        :> QueryParam "rOffset"           Double
+                        :> QueryParam "cOffset"           Double
                         :> Get '[JSON] TrajectoryResponse
       :<|> "districts"  :> Get '[JSON] [String]
 
@@ -45,14 +50,17 @@ loadIMDData path = do
             return scenarios
 
 -- | Build the full 13-point TrajectoryResponse for a matched Scenario
-buildTrajectory :: Scenario -> Maybe Int -> Maybe Double -> TrajectoryResponse
-buildTrajectory sc mOrigin mIntensity =
+buildTrajectory :: Scenario -> Maybe Int -> Maybe Double -> [Double] -> TrajectoryResponse
+buildTrajectory sc mOrigin mIntensity offsets =
     let intensityVal  = parseIntensity (intensity sc)
+        [hOff, pOff, tOff, rOff, cOff] = take 5 (offsets ++ repeat 0.0)
+        hasOffset     = any (/= 0.0) offsets
+        -- Baseline (ghost) trajectories - always from original CSV
         hPoints       = trajectoryFor Hospital    intensityVal
         pPoints       = trajectoryFor PowerGrid   intensityVal
         tPoints       = trajectoryFor TransitHub  intensityVal
         rPoints       = trajectoryFor Residential intensityVal
-        cPoints       = communicationTrajectory intensityVal pPoints
+        cPoints       = communicationTrajectory intensityVal 0.0 pPoints
         mkPoint i h p t r c = TrajectoryPoint
             { tpHour          = i
             , tpHospital      = h
@@ -63,13 +71,21 @@ buildTrajectory sc mOrigin mIntensity =
             }
         trajectory = zipWith6 mkPoint [0..12] hPoints pPoints tPoints rPoints cPoints
         
-        mOverrideTrajectory = case (mOrigin, mIntensity) of
-            (Just oTime, Just oInt) -> 
+        -- Override trajectories: intensity override OR resilience offset
+        mOverrideTrajectory = case (mOrigin, mIntensity, hasOffset) of
+            (Just oTime, Just oInt, _) -> 
                 let hO = trajectoryWithOverride Hospital intensityVal oTime oInt
                     pO = trajectoryWithOverride PowerGrid intensityVal oTime oInt
                     tO = trajectoryWithOverride TransitHub intensityVal oTime oInt
                     rO = trajectoryWithOverride Residential intensityVal oTime oInt
-                    cO = communicationTrajectoryWithOverride intensityVal oTime oInt pO
+                    cO = communicationTrajectoryWithOverride intensityVal oTime oInt cOff pO
+                in Just (zipWith6 mkPoint [0..12] hO pO tO rO cO)
+            (_, _, True) ->
+                let hO = trajectoryForOffset Hospital    intensityVal hOff
+                    pO = trajectoryForOffset PowerGrid   intensityVal pOff
+                    tO = trajectoryForOffset TransitHub  intensityVal tOff
+                    rO = trajectoryForOffset Residential intensityVal rOff
+                    cO = communicationTrajectory intensityVal cOff pO
                 in Just (zipWith6 mkPoint [0..12] hO pO tO rO cO)
             _ -> Nothing
     in TrajectoryResponse
@@ -90,11 +106,17 @@ simulateHandler scenarios district =
             let finalScenario = simulate 12 s
             in return $ finalScenario { narrative = generateNarrative finalScenario }
 
-trajectoryHandler :: [Scenario] -> String -> Maybe Int -> Maybe Double -> Handler TrajectoryResponse
-trajectoryHandler scenarios district mOrigin mIntensity =
+trajectoryHandler :: [Scenario] -> String -> Maybe Int -> Maybe Double -> Maybe Double -> Maybe Double -> Maybe Double -> Maybe Double -> Maybe Double -> Handler TrajectoryResponse
+trajectoryHandler scenarios district mOrigin mIntensity mHo mPg mTh mR mC =
     case filter (\s -> map toLower (districtName s) == map toLower district) scenarios of
         [] -> throwError err404 { errBody = "District not found" }
         (s:_) -> return $ buildTrajectory s mOrigin mIntensity
+            [ maybe 0.0 id mHo
+            , maybe 0.0 id mPg
+            , maybe 0.0 id mTh
+            , maybe 0.0 id mR
+            , maybe 0.0 id mC
+            ]
 
 districtsHandler :: [Scenario] -> Handler [String]
 districtsHandler scenarios = return $ nub $ map districtName scenarios

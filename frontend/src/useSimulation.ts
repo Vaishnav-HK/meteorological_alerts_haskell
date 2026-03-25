@@ -78,9 +78,17 @@ export function useSimulation(district: string) {
   return { data, loading, error };
 }
 
-export function useTrajectory(district: string, overrideOrigin?: number, overrideIntensity?: number) {
+export function useTrajectory(
+  district: string,
+  overrideOrigin?: number,
+  overrideIntensity?: number,
+  resilienceOffsets?: Record<string, number>
+) {
   const [trajectory, setTrajectory] = useState<TrajectoryResponse | null>(null);
   const [loadingTrajectory, setLoadingTrajectory] = useState(false);
+
+  // Serialise offsets so the effect dependency comparison works correctly
+  const offsetsKey = resilienceOffsets ? JSON.stringify(resilienceOffsets) : '';
 
   useEffect(() => {
     if (!district) {
@@ -96,6 +104,17 @@ export function useTrajectory(district: string, overrideOrigin?: number, overrid
     if (overrideOrigin !== undefined && overrideIntensity !== undefined) {
       url.searchParams.append('overrideOrigin', overrideOrigin.toString());
       url.searchParams.append('overrideIntensity', overrideIntensity.toString());
+    }
+    if (resilienceOffsets) {
+      const paramMap: Record<string, string> = {
+        Hospital: 'hoOffset', PowerGrid: 'pgOffset',
+        TransitHub: 'thOffset', Residential: 'rOffset', Communication: 'cOffset'
+      };
+      Object.entries(resilienceOffsets).forEach(([asset, val]) => {
+        if (val !== 0 && paramMap[asset]) {
+          url.searchParams.append(paramMap[asset], val.toString());
+        }
+      });
     }
 
     fetch(url.toString())
@@ -114,7 +133,7 @@ export function useTrajectory(district: string, overrideOrigin?: number, overrid
       });
 
     return () => { isMounted = false; };
-  }, [district, overrideOrigin, overrideIntensity]);
+  }, [district, overrideOrigin, overrideIntensity, offsetsKey]);
 
   return { trajectory, loadingTrajectory };
 }
