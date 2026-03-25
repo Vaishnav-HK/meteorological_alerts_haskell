@@ -9,7 +9,7 @@ Follow these instructions to set up and run the prototype on your local machine.
 ### Prerequisites
 
 Ensure you have the following installed:
-- **Haskell Ecosystem**: [GHC](https://www.haskell.org/ghc/) and [Cabal](https://www.haskell.org/cabal/) (or [Stack](https://docs.haskellstack.org/en/stable/))
+- **Haskell Ecosystem**: [GHC](https://www.haskell.org/ghc/) and [Cabal](https://www.haskell.org/cabal/)
 - **Node.js**: [LTS version recommended](https://nodejs.org/)
 - **npm**: Usually comes with Node.js
 
