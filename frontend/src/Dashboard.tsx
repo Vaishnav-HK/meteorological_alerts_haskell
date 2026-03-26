@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { useSimulation, useDistricts, useTrajectory, type Scenario, type TrajectoryPoint } from './useSimulation';
+import React, { useState } from 'react';
+import { useSimulation, useDistricts, useTrajectory, type Scenario, type TrajectoryPoint, type TrajectoryQueryParams } from './useSimulation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import { ShieldAlert, Play, Clock, ArrowRight, ChevronDown, Activity, Info, CheckCircle2, Loader2 } from 'lucide-react';
@@ -69,39 +69,30 @@ const Dashboard = () => {
   const [protocolState, setProtocolState] = useState<'idle' | 'dispatching' | 'sent'>('idle');
   const [overrideActive, setOverrideActive] = useState(false);
   const [overrideIntensity, setOverrideIntensity] = useState(150);
-  const [debouncedIntensity, setDebouncedIntensity] = useState(150);
   const [overrideOrigin, setOverrideOrigin] = useState(0);
 
-  const ASSET_KEYS = ['Hospital', 'PowerGrid', 'TransitHub', 'Residential', 'Communication'] as const;
-  type AssetKey = typeof ASSET_KEYS[number];
+  type AssetKey = 'Hospital' | 'PowerGrid' | 'TransitHub' | 'Residential' | 'Communication';
   const [resilienceOffsets, setResilienceOffsets] = useState<Record<AssetKey, number>>(
     { Hospital: 0, PowerGrid: 0, TransitHub: 0, Residential: 0, Communication: 0 }
   );
-  const [debouncedOffsets, setDebouncedOffsets] = useState(resilienceOffsets);
 
-  useEffect(() => {
-    const handler = setTimeout(() => {
-      setDebouncedIntensity(overrideIntensity);
-    }, 100);
-    return () => clearTimeout(handler);
-  }, [overrideIntensity]);
-
-  useEffect(() => {
-    const handler = setTimeout(() => {
-      setDebouncedOffsets(resilienceOffsets);
-    }, 100);
-    return () => clearTimeout(handler);
-  }, [resilienceOffsets]);
-
-  const hasOffsets = Object.values(debouncedOffsets).some(v => v !== 0);
+  const hasOffsets = Object.values(resilienceOffsets).some(v => v !== 0);
 
   const { data, loading, error } = useSimulation(activeDistrict);
-  const { trajectory }           = useTrajectory(
-    activeDistrict,
-    overrideActive ? overrideOrigin : undefined,
-    overrideActive ? debouncedIntensity : undefined,
-    hasOffsets ? debouncedOffsets : undefined
-  );
+  const csvIntensity = data ? Number(data.intensity) : 150;
+
+  function getCurrentParams(): TrajectoryQueryParams {
+    const intensity = overrideActive ? overrideIntensity : (Number.isFinite(csvIntensity) ? csvIntensity : 150);
+    return {
+      overrideOrigin: overrideActive ? overrideOrigin : undefined,
+      overrideIntensity: overrideActive ? intensity : undefined,
+      resilienceOverrides: resilienceOffsets,
+    };
+  }
+
+  const currentParams = getCurrentParams();
+  const { trajectory, loadingTrajectory } = useTrajectory(activeDistrict, currentParams);
+
   const { districts }            = useDistricts();
 
   const handleSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -114,6 +105,7 @@ const Dashboard = () => {
 
   const handlePlaySimulation = () => {
     if(!activeDistrict) return;
+    if (loadingTrajectory) return;
     setActiveHour(0);
     let hour = 0;
     const interval = setInterval(() => {
@@ -175,7 +167,7 @@ const Dashboard = () => {
   // Resolve current displayed health for an asset at the active hour
   const getDisplayHealth = (assetKind: string, finalHealth: number): number => {
     const hasAnyOverride = overrideActive || hasOffsets;
-    if (hasAnyOverride && trajectory?.trOverrideTrajectory?.length && activeHour >= overrideOrigin) {
+    if (hasAnyOverride && trajectory?.trOverrideTrajectory?.length) {
       return getAssetHealthAt(trajectory.trOverrideTrajectory, assetKind, activeHour);
     }
     if (trajectory?.trTrajectory?.length) {
@@ -197,6 +189,7 @@ const Dashboard = () => {
   };
 
   const isBlank  = !activeDistrict || !data;
+  const hasOverrideTrajectory = !!trajectory?.trOverrideTrajectory?.length;
   const chartData = (trajectory?.trTrajectory?.length)
     ? buildChartData(trajectory.trTrajectory, trajectory.trOverrideTrajectory)
     : isBlank ? emptyChartData : emptyChartData;
@@ -314,7 +307,7 @@ const Dashboard = () => {
             <div className={`bg-white/70 backdrop-blur-md rounded-3xl p-8 shadow-sm border border-white/20 transition-all duration-500 ${isBlank ? 'opacity-40 blur-sm pointer-events-none' : ''}`}>
               <div className="flex justify-between items-center mb-6">
                 <h3 className="text-lg font-medium text-gray-900">Infrastructure Impact</h3>
-                <button onClick={handlePlaySimulation} disabled={isBlank} className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-800 disabled:opacity-50 disabled:cursor-not-allowed rounded-full text-xs font-medium transition-colors">
+                <button onClick={handlePlaySimulation} disabled={isBlank || loadingTrajectory} className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-800 disabled:opacity-50 disabled:cursor-not-allowed rounded-full text-xs font-medium transition-colors">
                   <Play className="w-3.5 h-3.5" /> Play Simulation
                 </button>
               </div>
@@ -361,7 +354,7 @@ const Dashboard = () => {
                           <input
                             type="range" min="-50" max="50" step="1"
                             value={pct}
-                            disabled={isBlank}
+                            disabled={isBlank || loadingTrajectory}
                             onChange={(e) => {
                               const raw = Number(e.target.value) / 100;
                               setResilienceOffsets(prev => ({ ...prev, [asset.kind]: raw }));
@@ -389,8 +382,9 @@ const Dashboard = () => {
             <div className={`bg-white/70 backdrop-blur-md rounded-3xl p-8 shadow-sm border border-white/20 h-[380px] flex flex-col relative transition-all duration-500 ${isBlank ? 'opacity-40 blur-[3px] pointer-events-none' : ''}`}>
               <h3 className="text-lg font-medium mb-4 text-gray-900">Degradation Trajectory &amp; Scrubber</h3>
               
-              <div className="flex-1 -ml-4 mb-2">
-                <ResponsiveContainer width="100%" height="100%">
+                <div className="flex-1 -ml-4 mb-2">
+                <motion.div className="h-full" layout transition={{ duration: 0.35, ease: 'easeInOut' }}>
+                <ResponsiveContainer width="100%" height={250}>
                   <LineChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                     <XAxis dataKey="hour" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#94a3b8' }} dy={10} />
@@ -402,14 +396,59 @@ const Dashboard = () => {
                     {!isBlank && <ReferenceLine x={`${activeHour}h`} stroke="#94a3b8" strokeWidth={1} strokeDasharray="4 4" />}
 
                     {/* Ghost/Original Lines -> always baseline CSV */}
-                    <Line type="monotone" dataKey="Hospital"    stroke={ASSET_COLORS.Hospital}    strokeWidth={2} dot={false} strokeDasharray={(overrideActive || hasOffsets) ? "5 5" : ""} strokeOpacity={isBlank ? 0.3 : (overrideActive || hasOffsets) ? 0.3 : 0.9} strokeLinecap="round" />
-                    <Line type="monotone" dataKey="Residential" stroke={ASSET_COLORS.Residential} strokeWidth={2} dot={false} strokeDasharray={(overrideActive || hasOffsets) ? "5 5" : ""} strokeOpacity={isBlank ? 0.3 : (overrideActive || hasOffsets) ? 0.3 : 0.85} strokeLinecap="round" />
-                    <Line type="monotone" dataKey="TransitHub"  stroke={ASSET_COLORS.TransitHub}  strokeWidth={2} dot={false} strokeDasharray={(overrideActive || hasOffsets) ? "5 5" : ""} strokeOpacity={isBlank ? 0.3 : (overrideActive || hasOffsets) ? 0.3 : 0.85} strokeLinecap="round" />
-                    <Line type="monotone" dataKey="PowerGrid"   stroke={ASSET_COLORS.PowerGrid}   strokeWidth={2} dot={false} strokeDasharray={(overrideActive || hasOffsets) ? "5 5" : ""} strokeOpacity={isBlank ? 0.3 : (overrideActive || hasOffsets) ? 0.3 : 0.9} strokeLinecap="round" />
-                    <Line type="monotone" dataKey="Communication" stroke={ASSET_COLORS.Communication} strokeWidth={2} dot={false} strokeDasharray={(overrideActive || hasOffsets) ? "5 5" : ""} strokeOpacity={isBlank ? 0.3 : (overrideActive || hasOffsets) ? 0.3 : 0.9} strokeLinecap="round" />
+                    <Line
+                      type="monotone"
+                      dataKey="Hospital"
+                      stroke={ASSET_COLORS.Hospital}
+                      strokeWidth={2}
+                      dot={false}
+                      strokeDasharray={hasOverrideTrajectory ? "5 5" : undefined}
+                      strokeOpacity={isBlank ? 0.3 : hasOverrideTrajectory ? 0.3 : 0.9}
+                      strokeLinecap="round"
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="Residential"
+                      stroke={ASSET_COLORS.Residential}
+                      strokeWidth={2}
+                      dot={false}
+                      strokeDasharray={hasOverrideTrajectory ? "5 5" : undefined}
+                      strokeOpacity={isBlank ? 0.3 : hasOverrideTrajectory ? 0.3 : 0.85}
+                      strokeLinecap="round"
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="TransitHub"
+                      stroke={ASSET_COLORS.TransitHub}
+                      strokeWidth={2}
+                      dot={false}
+                      strokeDasharray={hasOverrideTrajectory ? "5 5" : undefined}
+                      strokeOpacity={isBlank ? 0.3 : hasOverrideTrajectory ? 0.3 : 0.85}
+                      strokeLinecap="round"
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="PowerGrid"
+                      stroke={ASSET_COLORS.PowerGrid}
+                      strokeWidth={2}
+                      dot={false}
+                      strokeDasharray={hasOverrideTrajectory ? "5 5" : undefined}
+                      strokeOpacity={isBlank ? 0.3 : hasOverrideTrajectory ? 0.3 : 0.9}
+                      strokeLinecap="round"
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="Communication"
+                      stroke={ASSET_COLORS.Communication}
+                      strokeWidth={2}
+                      dot={false}
+                      strokeDasharray={hasOverrideTrajectory ? "5 5" : undefined}
+                      strokeOpacity={isBlank ? 0.3 : hasOverrideTrajectory ? 0.3 : 0.9}
+                      strokeLinecap="round"
+                    />
 
                     {/* Bold Solid Override Lines */}
-                    {((overrideActive || hasOffsets) && trajectory?.trOverrideTrajectory) && (
+                    {hasOverrideTrajectory && trajectory?.trOverrideTrajectory && (
                       <>
                         <Line type="monotone" dataKey="OHospital"    stroke={ASSET_COLORS.Hospital}    strokeWidth={3} dot={false} strokeLinecap="round" />
                         <Line type="monotone" dataKey="OResidential" stroke={ASSET_COLORS.Residential} strokeWidth={3} dot={false} strokeLinecap="round" />
@@ -420,6 +459,7 @@ const Dashboard = () => {
                     )}
                   </LineChart>
                 </ResponsiveContainer>
+                </motion.div>
               </div>
               
               {/* Slider / Timeline Controls */}
@@ -463,7 +503,7 @@ const Dashboard = () => {
                         setOverrideActive(true);
                         setOverrideIntensity(Number(e.target.value));
                       }}
-                      disabled={isBlank}
+                      disabled={isBlank || loadingTrajectory}
                       style={{
                         background: `linear-gradient(to right, #60a5fa, #4f46e5)`
                       }}
@@ -613,11 +653,17 @@ const Dashboard = () => {
             item={openModal!}
             threat={data!.threat}
             event={data!.event}
-            overrideData={{
-              intensity: overrideIntensity,
-              origin: overrideOrigin,
-              hasNegativeOffset: Object.values(resilienceOffsets).some(v => v < 0)
-            }}
+            overrideData={
+              (overrideActive || hasOffsets)
+                ? {
+                    intensity: overrideIntensity,
+                    origin: overrideOrigin,
+                    hasNegativeOffset: Object.values(resilienceOffsets).some(v => v < 0),
+                    hasResilienceOffsets: hasOffsets,
+                    hasIntensityOverride: overrideActive,
+                  }
+                : undefined
+            }
             onClose={() => setOpenModal(null)}
           />
         )}

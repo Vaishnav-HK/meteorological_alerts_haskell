@@ -48,6 +48,17 @@ healthWithOverride assetType initialI rootT newI t =
                 else r ** (fromIntegral rootT * initialI / 300.0 + fromIntegral (t - rootT) * newI / 300.0)
     in max 0.0 (100.0 * decay)
 
+-- | Compute health including both:
+--   (1) a manual intensity override starting at rootT, and
+--   (2) a resilience offset applied from T+0 onward.
+healthWithOverrideOffset :: AssetType -> Double -> Double -> Int -> Double -> Int -> Double
+healthWithOverrideOffset assetType initialI offset rootT newI t =
+    let rEff = effectiveResilience assetType offset
+        decay = if t <= rootT
+                then rEff ** (fromIntegral t * initialI / 300.0)
+                else rEff ** (fromIntegral rootT * initialI / 300.0 + fromIntegral (t - rootT) * newI / 300.0)
+    in max 0.0 (100.0 * decay)
+
 -- | Build the 13-point (T+0 to T+12) trajectory for one asset type.
 trajectoryFor :: AssetType -> Double -> [Double]
 trajectoryFor assetType intensityVal =
@@ -62,6 +73,11 @@ trajectoryForOffset assetType intensityVal offset =
 trajectoryWithOverride :: AssetType -> Double -> Int -> Double -> [Double]
 trajectoryWithOverride assetType initialI rootT newI =
     map (healthWithOverride assetType initialI rootT newI) [0..12]
+
+-- | Build the 13-point (T+0 to T+12) trajectory with intensity override + resilience offset.
+trajectoryWithOverrideOffset :: AssetType -> Double -> Double -> Int -> Double -> [Double]
+trajectoryWithOverrideOffset assetType initialI offset rootT newI =
+    map (healthWithOverrideOffset assetType initialI offset rootT newI) [0..12]
 
 -- | Interdependent decay models for Communication
 communicationTrajectory :: Double -> Double -> [Double] -> [Double]

@@ -71,23 +71,28 @@ buildTrajectory sc mOrigin mIntensity offsets =
             }
         trajectory = zipWith6 mkPoint [0..12] hPoints pPoints tPoints rPoints cPoints
         
-        -- Override trajectories: intensity override OR resilience offset
-        mOverrideTrajectory = case (mOrigin, mIntensity, hasOffset) of
-            (Just oTime, Just oInt, _) -> 
-                let hO = trajectoryWithOverride Hospital intensityVal oTime oInt
-                    pO = trajectoryWithOverride PowerGrid intensityVal oTime oInt
-                    tO = trajectoryWithOverride TransitHub intensityVal oTime oInt
-                    rO = trajectoryWithOverride Residential intensityVal oTime oInt
+        -- Override trajectories: intensity override (optionally combined with resilience offsets)
+        mOverrideTrajectory = case (mOrigin, mIntensity) of
+            -- Manual intensity override: apply intensity change starting at rootT,
+            -- while applying resilience offsets immediately (T+0) if provided.
+            (Just oTime, Just oInt) ->
+                let hO = trajectoryWithOverrideOffset Hospital    intensityVal hOff oTime oInt
+                    pO = trajectoryWithOverrideOffset PowerGrid   intensityVal pOff oTime oInt
+                    tO = trajectoryWithOverrideOffset TransitHub  intensityVal tOff oTime oInt
+                    rO = trajectoryWithOverrideOffset Residential intensityVal rOff oTime oInt
                     cO = communicationTrajectoryWithOverride intensityVal oTime oInt cOff pO
                 in Just (zipWith6 mkPoint [0..12] hO pO tO rO cO)
-            (_, _, True) ->
-                let hO = trajectoryForOffset Hospital    intensityVal hOff
-                    pO = trajectoryForOffset PowerGrid   intensityVal pOff
-                    tO = trajectoryForOffset TransitHub  intensityVal tOff
-                    rO = trajectoryForOffset Residential intensityVal rOff
-                    cO = communicationTrajectory intensityVal cOff pO
-                in Just (zipWith6 mkPoint [0..12] hO pO tO rO cO)
-            _ -> Nothing
+            _ ->
+                if hasOffset
+                then
+                    let hO = trajectoryForOffset Hospital    intensityVal hOff
+                        pO = trajectoryForOffset PowerGrid   intensityVal pOff
+                        tO = trajectoryForOffset TransitHub  intensityVal tOff
+                        rO = trajectoryForOffset Residential intensityVal rOff
+                        cO = communicationTrajectory intensityVal cOff pO
+                    in Just (zipWith6 mkPoint [0..12] hO pO tO rO cO)
+                else
+                    Nothing
     in TrajectoryResponse
         { trDistrict   = districtName sc
         , trThreat     = threat sc

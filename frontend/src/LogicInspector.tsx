@@ -16,7 +16,20 @@ interface Snippet { label: string; lines: SnippetLine[] }
 
 export type FeedItem = '0h' | '4h' | '8h' | '12h';
 
-function getSnippet(item: FeedItem, threat?: string, event?: string, overrideData?: { intensity: number, origin: number }): Snippet {
+type OverrideDataForTrace = {
+  intensity: number;
+  origin: number;
+  hasNegativeOffset?: boolean;
+  hasResilienceOffsets: boolean;
+  hasIntensityOverride: boolean;
+};
+
+function getSnippet(
+  item: FeedItem,
+  _threat?: string,
+  event?: string,
+  overrideData?: OverrideDataForTrace
+): Snippet {
   if (item === '0h') {
     return {
       label: 'Initial Alert — generateNarrative',
@@ -31,10 +44,15 @@ function getSnippet(item: FeedItem, threat?: string, event?: string, overrideDat
   }
 
   if (item === '4h') {
-    const isOverride = !!overrideData;
+    const hasIntensityOverride = !!overrideData?.hasIntensityOverride;
+    const hasResilienceOffsets = !!overrideData?.hasResilienceOffsets;
     return {
-      label: isOverride ? '4h Resilience — healthWithOverride' : '4h Resilience — resilienceCoefficient',
-      lines: isOverride ? [
+      label: hasIntensityOverride
+        ? '4h Resilience — healthWithOverride'
+        : hasResilienceOffsets
+          ? '4h Resilience — healthAtOffset'
+          : '4h Resilience — resilienceCoefficient',
+      lines: hasIntensityOverride ? [
         { code: 'healthWithOverride :: AssetType -> Double -> Int -> Double -> Int -> Double' },
         { code: 'healthWithOverride asset initialI rootT newI t =' },
         { code: '    let r = resilienceCoefficient asset' },
@@ -44,14 +62,24 @@ function getSnippet(item: FeedItem, threat?: string, event?: string, overrideDat
         { code: `                           + fromIntegral (t - rootT) * ${overrideData.intensity} / 300.0)`, hot: true },
         { code: '    in max 0.0 (100.0 * decay)' },
       ] : [
-        { code: 'resilienceCoefficient :: AssetType -> Double' },
-        { code: 'resilienceCoefficient Hospital    = 0.98' },
-        { code: 'resilienceCoefficient Residential = 0.85' },
-        { code: 'resilienceCoefficient TransitHub  = 0.75' },
-        { code: 'resilienceCoefficient PowerGrid   = 0.65', hot: true },
-        { code: '' },
-        { code: '-- Recursive Health Step:' },
-        { code: 'Health(t) = Health(t-1) * (R ^ (Intensity / 300))', hot: true },
+        ...(hasResilienceOffsets
+          ? [
+              { code: 'healthAtOffset :: AssetType -> Double -> Double -> Int -> Double' },
+              { code: 'healthAtOffset assetType intensityVal offset t =' },
+              { code: '    let rEff = effectiveResilience assetType offset' },
+              { code: '        decay = rEff ** (fromIntegral t * intensityVal / 300.0)', hot: true },
+              { code: '    in max 0.0 (100.0 * decay)' },
+            ]
+          : [
+              { code: 'resilienceCoefficient :: AssetType -> Double' },
+              { code: 'resilienceCoefficient Hospital    = 0.98' },
+              { code: 'resilienceCoefficient Residential = 0.85' },
+              { code: 'resilienceCoefficient TransitHub  = 0.75' },
+              { code: 'resilienceCoefficient PowerGrid   = 0.65', hot: true },
+              { code: '' },
+              { code: '-- Recursive Health Step:' },
+              { code: 'Health(t) = Health(t-1) * (R ^ (Intensity / 300))', hot: true },
+            ]),
       ]
     };
   }
@@ -73,16 +101,23 @@ function getSnippet(item: FeedItem, threat?: string, event?: string, overrideDat
   }
 
   // 12h
-  const isOverride12 = !!overrideData;
+  const hasIntensityOverride = !!overrideData?.hasIntensityOverride;
+  const hasResilienceOffsets = !!overrideData?.hasResilienceOffsets;
   return {
-    label: isOverride12 ? '12h Convergence — Override Branching' : '12h Convergence — Trajectory Build',
-    lines: isOverride12 ? [
+    label: (hasIntensityOverride || hasResilienceOffsets)
+      ? '12h Convergence — Override Branching'
+      : '12h Convergence — Trajectory Build',
+    lines: hasIntensityOverride ? [
       { code: 'mOverrideTrajectory = case (mOrigin, mIntensity) of' },
       { code: `    (Just oTime, Just ${overrideData.intensity}) -> `, hot: true },
       { code: '        let hO = trajectoryWithOverride Hospital intensityVal oTime oInt' },
       { code: '            pO = trajectoryWithOverride PowerGrid intensityVal oTime oInt' },
       { code: '            ... ' },
       { code: '        in Just (zipWith5 mkPoint [0..12] hO pO tO rO)', hot: true },
+    ] : hasResilienceOffsets ? [
+      { code: '... offset-based branch uses trajectoryForOffset ...', hot: true },
+      { code: 'trajectoryForOffset assetType intensityVal offset =' },
+      { code: '    map (healthAtOffset assetType intensityVal offset) [0..12]' },
     ] : [
       { code: 'buildTrajectory :: Scenario -> TrajectoryResponse' },
       { code: 'buildTrajectory sc =' },
@@ -105,7 +140,7 @@ function syntaxHighlight(code: string): React.ReactNode {
         if (tok.startsWith('--')) return <span key={i} className="text-[#8b949e]">{tok}</span>;
         if (tok.startsWith('"'))  return <span key={i} className="text-[#a5d6ff]">{tok}</span>;
         if (/^[A-Z]/.test(tok))  return <span key={i} className="text-[#ff7b72]">{tok}</span>;
-        if (/^(::|-\>|=|\||where|let|in|do|if|then|else|case|of|map|return)$/.test(tok))
+        if (/^(::|->|=|\||where|let|in|do|if|then|else|case|of|map|return)$/.test(tok))
                                   return <span key={i} className="text-[#d2a8ff]">{tok}</span>;
         if (/^\d/.test(tok))     return <span key={i} className="text-[#79c0ff]">{tok}</span>;
         return <span key={i} className="text-[#c9d1d9]">{tok}</span>;
@@ -119,7 +154,7 @@ interface LogicModalProps {
   item: FeedItem;
   threat?: string;
   event?: string;
-  overrideData?: { intensity: number, origin: number, hasNegativeOffset?: boolean };
+  overrideData?: OverrideDataForTrace;
   onClose: () => void;
 }
 
@@ -185,8 +220,16 @@ export const LogicModal: React.FC<LogicModalProps> = ({ item, threat, event, ove
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
               </div>
               <p className="text-[#c9d1d9] text-[13px] leading-relaxed font-medium">
-                <strong className="text-white block mb-0.5 mt-0.5">Branching Logic Active:</strong>
-                Recalculating future impact from <span className="text-amber-400 font-bold">T+{overrideData.origin}</span> using <span className="text-amber-400 font-bold">{overrideData.intensity}mm</span>.
+                <strong className="text-white block mb-0.5 mt-0.5">Manual Override Detected:</strong>
+                {overrideData.hasIntensityOverride ? (
+                  <>
+                    Recalculating future impact from <span className="text-amber-400 font-bold">T+{overrideData.origin}</span> using <span className="text-amber-400 font-bold">{overrideData.intensity}mm</span>.
+                  </>
+                ) : (
+                  <>
+                    Applying resilience offsets across all future steps (including T+0).
+                  </>
+                )}
               </p>
             </div>
           )}
