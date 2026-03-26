@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
-import { useSimulation, useDistricts, useTrajectory, type Scenario, type TrajectoryPoint, type TrajectoryQueryParams } from './useSimulation';
+import { useState } from 'react';
+import { useSimulation, useTrajectory, type Scenario, type TrajectoryPoint, type TrajectoryQueryParams } from './useSimulation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
-import { ShieldAlert, Play, Clock, ArrowRight, ChevronDown, Activity, Info, CheckCircle2, Loader2 } from 'lucide-react';
+import { ShieldAlert, Play, Clock, ArrowRight, Activity, Info, CheckCircle2, Loader2 } from 'lucide-react';
 import LogicModal from './LogicInspector';
 
 // ── Asset colour constants ────────────────────────────────────────────────────
@@ -61,15 +61,30 @@ function getAssetHealthAt(points: TrajectoryPoint[], kind: string, hourIndex: nu
   return 100;
 }
 
+const MOCK_SERIES_2024 = [115, 219, 336, 396, 413, 396, 336, 219, 115, 43, 10, 10, 10];
+const MOCK_SERIES_2025 = [35.0, 35.0, 36.5, 41.5, 46.5, 48.2, 46.5, 41.5, 36.5, 35.0, 35.0, 35.0, 35.0];
+const MOCK_SERIES_2023 = [58, 111, 171, 201, 210, 201, 171, 111, 58, 23, 10, 10, 10];
+
+const HISTORICAL_EVENTS = [
+  { id: '2024-monsoon', title: '2024 Monsoon Peak', hazard: 'Rainfall', series: MOCK_SERIES_2024, year: 2024 },
+  { id: '2025-heatwave', title: '2025 Heatwave Alpha', hazard: 'Heatwave', series: MOCK_SERIES_2025, year: 2025 },
+  { id: '2023-cyclone', title: '2023 Cyclone Biparjoy', hazard: 'Cyclone', series: MOCK_SERIES_2023, year: 2023 },
+] as const;
+
 // ─────────────────────────────────────────────────────────────────────────────
 const Dashboard = () => {
-  const [activeDistrict, setActiveDistrict] = useState('');
+  type Hazard = 'Rainfall' | 'Heatwave' | 'Cyclone';
+  const [activeHazard, setActiveHazard] = useState<Hazard>('Rainfall');
   const [activeHour, setActiveHour] = useState(0);
   const [openModal, setOpenModal]   = useState<'0h' | '4h' | '8h' | '12h' | null>(null); 
   const [protocolState, setProtocolState] = useState<'idle' | 'dispatching' | 'sent'>('idle');
   const [overrideActive, setOverrideActive] = useState(false);
   const [overrideIntensity, setOverrideIntensity] = useState(150);
   const [overrideOrigin, setOverrideOrigin] = useState(0);
+
+  const [archiveMode, setArchiveMode] = useState(false);
+  const [selectedEventId, setSelectedEventId] = useState('2024-monsoon');
+  const selectedEvent = HISTORICAL_EVENTS.find(e => e.id === selectedEventId);
 
   type AssetKey = 'Hospital' | 'PowerGrid' | 'TransitHub' | 'Residential' | 'Communication';
   const [resilienceOffsets, setResilienceOffsets] = useState<Record<AssetKey, number>>(
@@ -78,33 +93,32 @@ const Dashboard = () => {
 
   const hasOffsets = Object.values(resilienceOffsets).some(v => v !== 0);
 
-  const { data, loading, error } = useSimulation(activeDistrict);
-  const csvIntensity = data ? Number(data.intensity) : 150;
+  const historicalSeries = archiveMode && selectedEvent ? selectedEvent.series : undefined;
+  const { data, loading, error } = useSimulation(activeHazard, historicalSeries as number[] | undefined);
+  const parsedDataIntensities = data ? data.intensity.replace(/[\[\]]/g, '').split(',').map(Number) : [150];
+  const activeIntensity = Math.round((historicalSeries && historicalSeries[activeHour]) || parsedDataIntensities[activeHour] || 150);
 
   function getCurrentParams(): TrajectoryQueryParams {
-    const intensity = overrideActive ? overrideIntensity : (Number.isFinite(csvIntensity) ? csvIntensity : 150);
+    const intensity = overrideActive ? overrideIntensity : (parsedDataIntensities[0] || 150);
     return {
       overrideOrigin: overrideActive ? overrideOrigin : undefined,
       overrideIntensity: overrideActive ? intensity : undefined,
       resilienceOverrides: resilienceOffsets,
+      historicalSeries: historicalSeries as number[] | undefined,
     };
   }
 
   const currentParams = getCurrentParams();
-  const { trajectory, loadingTrajectory } = useTrajectory(activeDistrict, currentParams);
+  const { trajectory, loadingTrajectory } = useTrajectory(activeHazard, currentParams);
 
-  const { districts }            = useDistricts();
-
-  const handleSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const val = e.target.value;
-    setActiveDistrict(val);
-    setActiveHour(0);
-    setProtocolState('idle');
-    setOverrideActive(false);
-  };
+  const hazardOptions: Array<{ key: Hazard; label: string; short: string }> = [
+    { key: 'Rainfall', label: '🌧 Rainfall', short: 'Rainfall' },
+    { key: 'Heatwave', label: '🌡 Heatwave', short: 'Heatwave' },
+    { key: 'Cyclone', label: '🌪 Cyclone', short: 'Cyclone' },
+  ];
 
   const handlePlaySimulation = () => {
-    if(!activeDistrict) return;
+    if (isBlank) return;
     if (loadingTrajectory) return;
     setActiveHour(0);
     let hour = 0;
@@ -188,7 +202,7 @@ const Dashboard = () => {
     return `Calculated average of current projected health across all mapped assets (H=${getH('Hospital')}%, P=${getH('PowerGrid')}%, T=${getH('TransitHub')}%, R=${getH('Residential')}%).`;
   };
 
-  const isBlank  = !activeDistrict || !data;
+  const isBlank  = !data;
   const hasOverrideTrajectory = !!trajectory?.trOverrideTrajectory?.length;
   const chartData = (trajectory?.trTrajectory?.length)
     ? buildChartData(trajectory.trTrajectory, trajectory.trOverrideTrajectory)
@@ -201,26 +215,98 @@ const Dashboard = () => {
     <>
     <div className="min-h-screen p-8 max-w-7xl mx-auto flex flex-col gap-8">
       
-      {/* Centered Top Search Dropdown */}
+      {/* Centered Hazard Toggle */}
       <header className="flex flex-col items-center justify-center gap-6 mt-4">
         <div className="text-center">
           <h1 className="text-3xl font-semibold tracking-tight text-gray-900">DRR Framework</h1>
           <p className="text-gray-500 text-sm mt-1">Logic-Based Urban Resilience Assessment</p>
         </div>
         
-        <div className="relative w-full max-w-lg mb-4 group cursor-pointer">
-          <select 
-            className="w-full appearance-none pl-6 pr-12 py-3.5 rounded-xl bg-white/80 backdrop-blur-md border border-gray-200/80 shadow-sm text-gray-800 font-medium focus:outline-none focus:ring-2 focus:ring-black/5 transition-all cursor-pointer"
-            value={activeDistrict}
-            onChange={handleSelectChange}
-            disabled={loading}
-          >
-            <option value="" disabled>Select District for Impact Projection...</option>
-            {districts.map(d => (
-              <option key={d} value={d}>{d}</option>
-            ))}
-          </select>
-          <ChevronDown className="absolute right-5 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none group-hover:text-gray-600 transition-colors" />
+        <div className="w-full max-w-lg flex flex-col gap-4">
+          <div className="flex justify-center mb-2">
+            <div className="inline-flex bg-gray-100 p-1 rounded-full text-sm font-medium">
+              <button 
+                onClick={() => { setArchiveMode(false); }}
+                className={`px-4 py-1.5 rounded-full transition-colors ${!archiveMode ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                Live Physics
+              </button>
+              <button 
+                onClick={() => { 
+                  setArchiveMode(true); 
+                  if (selectedEvent) setActiveHazard(selectedEvent.hazard as Hazard);
+                }}
+                className={`px-4 py-1.5 rounded-full transition-colors flex items-center gap-1.5 ${archiveMode ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                📂 Historical Archive
+              </button>
+            </div>
+          </div>
+
+          {!archiveMode ? (
+            <>
+              <div className="flex items-center gap-1 p-1 bg-white/60 backdrop-blur-md border border-gray-200/80 rounded-2xl shadow-sm">
+                {hazardOptions.map((hz) => {
+                  const selected = activeHazard === hz.key;
+                  return (
+                    <button
+                      key={hz.key}
+                      type="button"
+                      onClick={() => {
+                        setActiveHazard(hz.key);
+                        setActiveHour(0);
+                        setProtocolState('idle');
+                        setOverrideActive(false);
+                        setOverrideOrigin(0);
+                        setResilienceOffsets({
+                          Hospital: 0,
+                          PowerGrid: 0,
+                          TransitHub: 0,
+                          Residential: 0,
+                          Communication: 0,
+                        });
+                      }}
+                      disabled={loading}
+                      className={`flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all ${
+                        selected
+                          ? 'bg-gray-900 text-white shadow-sm'
+                          : 'text-gray-700 hover:bg-white/90'
+                      }`}
+                    >
+                      {hz.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="text-center text-xs text-gray-500">
+                Scenario: {activeHazard} Active
+              </div>
+            </>
+          ) : (
+            <div className="bg-white/60 backdrop-blur-md border border-gray-200/80 rounded-2xl shadow-sm p-3">
+               <select 
+                 value={selectedEventId}
+                 onChange={(e) => {
+                   const val = e.target.value;
+                   setSelectedEventId(val);
+                   const ev = HISTORICAL_EVENTS.find(event => event.id === val);
+                   if (ev) {
+                     setActiveHazard(ev.hazard as Hazard);
+                     setActiveHour(0);
+                     setProtocolState('idle');
+                     setOverrideActive(false);
+                     setOverrideOrigin(0);
+                     setResilienceOffsets({ Hospital: 0, PowerGrid: 0, TransitHub: 0, Residential: 0, Communication: 0 });
+                   }
+                 }}
+                 className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl shadow-sm text-gray-900 font-medium focus:ring-2 focus:ring-indigo-500 outline-none"
+               >
+                 {HISTORICAL_EVENTS.map(ev => (
+                   <option key={ev.id} value={ev.id}>{ev.title} ({ev.year}) - {ev.hazard}</option>
+                 ))}
+               </select>
+            </div>
+          )}
         </div>
       </header>
 
@@ -244,10 +330,10 @@ const Dashboard = () => {
           <div className="flex flex-col gap-6 col-span-1 border border-white/20 bg-white/70 backdrop-blur-md rounded-3xl shadow-sm text-center relative overflow-hidden">
             
             <div className={`p-8 rounded-t-3xl border-b backdrop-blur-md transition-colors ${getHeroGlow(data?.threat)}`}>
-              <h2 className={`text-2xl font-medium tracking-tight text-gray-900 leading-tight ${isBlank ? 'opacity-30 blur-sm' : ''}`}>Current Conditions<br/>in {data?.districtName || 'District'}</h2>
+              <h2 className={`text-2xl font-medium tracking-tight text-gray-900 leading-tight ${isBlank ? 'opacity-30 blur-sm' : ''}`}>Current Conditions<br/>Scenario: {data?.hazard || activeHazard} Active</h2>
               <div className={`mt-3 inline-flex flex-col gap-1 items-center justify-center p-3 bg-white/60 rounded-xl shadow-sm border border-white/50 w-full text-sm ${isBlank ? 'opacity-30 blur-sm' : ''}`}>
-                <span className="font-semibold text-gray-800">IMD Alert: {data?.threat}</span>
-                <span className="text-gray-600">Intensity: {data?.intensity} {data?.event === 'Rainfall' ? 'mm' : data?.event === 'WindSpeed' ? 'km/h' : ''}</span>
+                <span className="font-semibold text-gray-800">Alert: {data?.threat}</span>
+                <span className="text-gray-600">Intensity at T+{activeHour}: {activeIntensity} {activeHazard === 'Rainfall' ? 'mm' : activeHazard === 'Heatwave' ? '°C' : 'km/h'}</span>
               </div>
             </div>
 
@@ -267,7 +353,9 @@ const Dashboard = () => {
               <div className={`p-4 transition-all duration-700 ease-in-out ${getDecayTint(data?.threat)}`}>
                 <div className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-2">Situation Report</div>
                 <p className="text-[14px] leading-relaxed text-gray-800 font-medium h-24 overflow-hidden">
-                  {data?.narrative || 'Awaiting structural assessment and atmospheric data cross-correlation from the Haskell framework logic.'}
+                  {archiveMode && selectedEvent ? 
+                    `Analyzing Historical IMD Data: Event ${selectedEvent.title}, Year ${selectedEvent.year}.`
+                  : data?.narrative || 'Awaiting structural assessment and atmospheric data cross-correlation from the Haskell framework logic.'}
                 </p>
               </div>
             </div>
@@ -378,13 +466,23 @@ const Dashboard = () => {
               </div>
             </div>
 
-            {/* Degradation Trajectory & Scrubber */}
-            <div className={`bg-white/70 backdrop-blur-md rounded-3xl p-8 shadow-sm border border-white/20 h-[380px] flex flex-col relative transition-all duration-500 ${isBlank ? 'opacity-40 blur-[3px] pointer-events-none' : ''}`}>
-              <h3 className="text-lg font-medium mb-4 text-gray-900">Degradation Trajectory &amp; Scrubber</h3>
+            {/* Degradation Trajectory & Scrubber Bento Card */}
+            <div className={`bg-white/80 backdrop-blur-md rounded-3xl p-8 shadow-sm border border-slate-100 flex flex-col gap-8 transition-all duration-500 ${isBlank ? 'opacity-40 blur-[3px] pointer-events-none' : ''}`}>
               
-                <div className="flex-1 -ml-4 mb-2">
-                <motion.div className="h-full" layout transition={{ duration: 0.35, ease: 'easeInOut' }}>
-                <ResponsiveContainer width="100%" height={250}>
+              {/* 1. Header */}
+              <div className="flex justify-between items-center">
+                <h3 className="text-lg font-medium text-gray-900 leading-none">Degradation Trajectory &amp; Scrubber</h3>
+                {overrideActive && !archiveMode && (
+                  <div className="bg-amber-50 border border-amber-200 px-3 py-1 rounded-md text-amber-600 text-[11px] font-bold uppercase tracking-wider shadow-sm flex items-center">
+                    NEW ORIGIN: T+{overrideOrigin}H
+                  </div>
+                )}
+              </div>
+              
+              {/* 2. The Graph */}
+              <div className="w-full -ml-4 relative h-[250px] shrink-0">
+                <motion.div className="h-full w-[calc(100%+16px)]" layout transition={{ duration: 0.35, ease: 'easeInOut' }}>
+                <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                     <XAxis dataKey="hour" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#94a3b8' }} dy={10} />
@@ -396,64 +494,19 @@ const Dashboard = () => {
                     {!isBlank && <ReferenceLine x={`${activeHour}h`} stroke="#94a3b8" strokeWidth={1} strokeDasharray="4 4" />}
 
                     {/* Ghost/Original Lines -> always baseline CSV */}
-                    <Line
-                      type="monotone"
-                      dataKey="Hospital"
-                      stroke={ASSET_COLORS.Hospital}
-                      strokeWidth={2}
-                      dot={false}
-                      strokeDasharray={hasOverrideTrajectory ? "5 5" : undefined}
-                      strokeOpacity={isBlank ? 0.3 : hasOverrideTrajectory ? 0.3 : 0.9}
-                      strokeLinecap="round"
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="Residential"
-                      stroke={ASSET_COLORS.Residential}
-                      strokeWidth={2}
-                      dot={false}
-                      strokeDasharray={hasOverrideTrajectory ? "5 5" : undefined}
-                      strokeOpacity={isBlank ? 0.3 : hasOverrideTrajectory ? 0.3 : 0.85}
-                      strokeLinecap="round"
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="TransitHub"
-                      stroke={ASSET_COLORS.TransitHub}
-                      strokeWidth={2}
-                      dot={false}
-                      strokeDasharray={hasOverrideTrajectory ? "5 5" : undefined}
-                      strokeOpacity={isBlank ? 0.3 : hasOverrideTrajectory ? 0.3 : 0.85}
-                      strokeLinecap="round"
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="PowerGrid"
-                      stroke={ASSET_COLORS.PowerGrid}
-                      strokeWidth={2}
-                      dot={false}
-                      strokeDasharray={hasOverrideTrajectory ? "5 5" : undefined}
-                      strokeOpacity={isBlank ? 0.3 : hasOverrideTrajectory ? 0.3 : 0.9}
-                      strokeLinecap="round"
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="Communication"
-                      stroke={ASSET_COLORS.Communication}
-                      strokeWidth={2}
-                      dot={false}
-                      strokeDasharray={hasOverrideTrajectory ? "5 5" : undefined}
-                      strokeOpacity={isBlank ? 0.3 : hasOverrideTrajectory ? 0.3 : 0.9}
-                      strokeLinecap="round"
-                    />
+                    <Line type="monotone" dataKey="Hospital" stroke={ASSET_COLORS.Hospital} strokeWidth={2} dot={false} strokeDasharray={hasOverrideTrajectory ? "5 5" : undefined} strokeOpacity={isBlank ? 0.3 : hasOverrideTrajectory ? 0.3 : 0.9} strokeLinecap="round" />
+                    <Line type="monotone" dataKey="Residential" stroke={ASSET_COLORS.Residential} strokeWidth={2} dot={false} strokeDasharray={hasOverrideTrajectory ? "5 5" : undefined} strokeOpacity={isBlank ? 0.3 : hasOverrideTrajectory ? 0.3 : 0.85} strokeLinecap="round" />
+                    <Line type="monotone" dataKey="TransitHub" stroke={ASSET_COLORS.TransitHub} strokeWidth={2} dot={false} strokeDasharray={hasOverrideTrajectory ? "5 5" : undefined} strokeOpacity={isBlank ? 0.3 : hasOverrideTrajectory ? 0.3 : 0.85} strokeLinecap="round" />
+                    <Line type="monotone" dataKey="PowerGrid" stroke={ASSET_COLORS.PowerGrid} strokeWidth={2} dot={false} strokeDasharray={hasOverrideTrajectory ? "5 5" : undefined} strokeOpacity={isBlank ? 0.3 : hasOverrideTrajectory ? 0.3 : 0.9} strokeLinecap="round" />
+                    <Line type="monotone" dataKey="Communication" stroke={ASSET_COLORS.Communication} strokeWidth={2} dot={false} strokeDasharray={hasOverrideTrajectory ? "5 5" : undefined} strokeOpacity={isBlank ? 0.3 : hasOverrideTrajectory ? 0.3 : 0.9} strokeLinecap="round" />
 
                     {/* Bold Solid Override Lines */}
                     {hasOverrideTrajectory && trajectory?.trOverrideTrajectory && (
                       <>
-                        <Line type="monotone" dataKey="OHospital"    stroke={ASSET_COLORS.Hospital}    strokeWidth={3} dot={false} strokeLinecap="round" />
+                        <Line type="monotone" dataKey="OHospital" stroke={ASSET_COLORS.Hospital} strokeWidth={3} dot={false} strokeLinecap="round" />
                         <Line type="monotone" dataKey="OResidential" stroke={ASSET_COLORS.Residential} strokeWidth={3} dot={false} strokeLinecap="round" />
-                        <Line type="monotone" dataKey="OTransitHub"  stroke={ASSET_COLORS.TransitHub}  strokeWidth={3} dot={false} strokeLinecap="round" />
-                        <Line type="monotone" dataKey="OPowerGrid"   stroke={ASSET_COLORS.PowerGrid}   strokeWidth={3} dot={false} strokeLinecap="round" />
+                        <Line type="monotone" dataKey="OTransitHub" stroke={ASSET_COLORS.TransitHub} strokeWidth={3} dot={false} strokeLinecap="round" />
+                        <Line type="monotone" dataKey="OPowerGrid" stroke={ASSET_COLORS.PowerGrid} strokeWidth={3} dot={false} strokeLinecap="round" />
                         <Line type="monotone" dataKey="OCommunication" stroke={ASSET_COLORS.Communication} strokeWidth={3} dot={false} strokeLinecap="round" />
                       </>
                     )}
@@ -462,18 +515,11 @@ const Dashboard = () => {
                 </motion.div>
               </div>
               
-              {/* Slider / Timeline Controls */}
-              <div className="relative px-4 pb-2 z-20 mt-2">
-                
-                {/* Time Scrubber */}
-                <div className="flex justify-between items-center text-[11px] font-semibold text-gray-400 mb-2 uppercase tracking-widest">
+              {/* 3. Time Scrubber */}
+              <div className="w-full flex flex-col gap-2 relative z-20 px-1">
+                <div className="flex justify-between items-center text-[11px] font-semibold text-gray-400 uppercase tracking-widest">
                   <span>0h</span>
-                  <motion.span 
-                    animate={{ scale: activeHour > 0 ? 1 : 0.95 }}
-                    className={`px-3 py-1 rounded-md shadow-sm border block transition-colors ${overrideActive ? 'bg-amber-100 border-amber-300 text-amber-800' : 'bg-white border-gray-200 text-gray-700'}`}
-                  >
-                    {overrideActive ? `NEW ORIGIN: T+${activeHour}h` : `T + ${activeHour}h`}
-                  </motion.span>
+                  <span className="text-gray-700 font-bold bg-gray-100 px-3 py-1 rounded-full border border-gray-200 shadow-sm">T + {activeHour}h</span>
                   <span>12h</span>
                 </div>
                 <input 
@@ -484,26 +530,35 @@ const Dashboard = () => {
                   disabled={isBlank}
                   className={`w-full appearance-none h-1.5 rounded-full outline-none transition-all ${isBlank ? 'bg-gray-200 cursor-not-allowed' : 'bg-slate-200 cursor-pointer'} [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-gray-200 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:hover:scale-125 [&::-webkit-slider-thumb]:transition-transform relative z-10`}
                 />
+              </div>
 
-                {/* Horizontal Override Slider */}
-                <div className={`mt-6 flex items-center justify-between gap-4 transition-opacity duration-300 ${isBlank ? 'opacity-40 pointer-events-none' : 'opacity-100'}`}>
-                  <span className="text-[11px] font-bold text-gray-400 uppercase tracking-widest whitespace-nowrap w-32">
+              {/* 4. Intensity Control & Legend (Bottom Group) */}
+              <div className="flex flex-col gap-4 pt-2">
+                {archiveMode && (
+                  <div className="flex items-center gap-2 text-xs font-semibold text-cyan-600 bg-cyan-50 px-3 py-2 rounded-lg border border-cyan-100 w-full">
+                    <span>🔒</span> Intensity currently locked to IMD Observed Data (Year: {selectedEvent?.year}).
+                  </div>
+                )}
+                <div className={`flex items-center gap-4 ${archiveMode ? 'opacity-50 pointer-events-none' : ''}`}>
+                  <div className="text-[11px] font-bold text-gray-400 uppercase tracking-widest w-32 shrink-0">
                     Forecast Intensity
-                  </span>
+                  </div>
                   
                   <div className="flex-1 relative flex items-center">
                     <input 
                       type="range"
                       min="50" max="350" step="1"
-                      value={overrideActive ? overrideIntensity : (trajectory ? parseInt(trajectory.trIntensity) || 150 : 150)}
+                      value={overrideActive ? overrideIntensity : activeIntensity}
                       onChange={(e) => {
-                        if (!overrideActive || activeHour !== overrideOrigin) {
-                          setOverrideOrigin(activeHour);
+                        if (!archiveMode) {
+                          if (!overrideActive || activeHour !== overrideOrigin) {
+                            setOverrideOrigin(activeHour);
+                          }
+                          setOverrideActive(true);
+                          setOverrideIntensity(Number(e.target.value));
                         }
-                        setOverrideActive(true);
-                        setOverrideIntensity(Number(e.target.value));
                       }}
-                      disabled={isBlank || loadingTrajectory}
+                      disabled={isBlank || loadingTrajectory || archiveMode}
                       style={{
                         background: `linear-gradient(to right, #60a5fa, #4f46e5)`
                       }}
@@ -511,35 +566,34 @@ const Dashboard = () => {
                     />
                   </div>
 
-                  <div className="w-16 text-right flex flex-col items-end">
-                    <span className="text-[12px] font-bold text-gray-800 bg-white/80 backdrop-blur-md shadow-sm border border-gray-200/50 px-2.5 py-1 rounded-lg">
-                      {overrideActive ? overrideIntensity : (trajectory ? parseInt(trajectory.trIntensity) || 150 : 150)} mm
-                    </span>
+                  <div className="flex flex-col items-center shrink-0 w-20">
+                    <div className="text-[13px] font-bold text-gray-800 bg-slate-50 border border-slate-200/60 px-3 py-1.5 rounded-lg shadow-sm w-full text-center">
+                      {overrideActive ? overrideIntensity : activeIntensity} <span className="text-[10px] text-gray-400 font-semibold">{activeHazard === 'Rainfall' ? 'mm' : activeHazard==='Heatwave'?'°C':'km/h'}</span>
+                    </div>
                     <AnimatePresence>
-                      {overrideActive && (
-                        <motion.button 
-                          initial={{ opacity: 0, height: 0 }} 
-                          animate={{ opacity: 1, height: 'auto' }} 
-                          exit={{ opacity: 0, height: 0 }}
-                          onClick={() => setOverrideActive(false)} 
-                          className="mt-1.5 text-[9px] uppercase tracking-wider text-apple-red font-bold hover:underline"
-                        >
-                          Reset
-                        </motion.button>
-                      )}
-                    </AnimatePresence>
+                      {overrideActive && !archiveMode && (
+                      <motion.button 
+                        initial={{ opacity: 0, height: 0 }} 
+                        animate={{ opacity: 1, height: 'auto', marginTop: '6px' }} 
+                        exit={{ opacity: 0, height: 0, marginTop: 0 }}
+                        onClick={() => setOverrideActive(false)} 
+                        className="text-[9px] uppercase tracking-wider text-rose-500 font-extrabold hover:text-rose-700 transition-colors"
+                      >
+                        Reset
+                      </motion.button>
+                    )}
+                  </AnimatePresence>
                   </div>
                 </div>
 
-              </div>
-
-              {/* Custom Legend — fanned out order, top to bottom: Hospital, Residential, TransitHub, PowerGrid, Communication */}
-              <div className={`flex justify-end gap-3 mt-4 text-[10px] text-gray-500 font-medium uppercase tracking-wider pr-4 transition-opacity ${isBlank ? 'opacity-0' : 'opacity-100'}`}>
-                <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full" style={{ backgroundColor: ASSET_COLORS.Hospital }}></div>Hospital</div>
-                <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full" style={{ backgroundColor: ASSET_COLORS.Residential }}></div>Residential</div>
-                <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full" style={{ backgroundColor: ASSET_COLORS.TransitHub }}></div>Transit</div>
-                <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full" style={{ backgroundColor: ASSET_COLORS.PowerGrid }}></div>Power</div>
-                <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full" style={{ backgroundColor: ASSET_COLORS.Communication }}></div>Comm</div>
+                {/* The Legend */}
+                <div className={`flex justify-center gap-4 mt-2 text-[10px] text-gray-500 font-semibold uppercase tracking-wider transition-opacity ${isBlank ? 'opacity-0' : 'opacity-100'}`}>
+                  <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-full shadow-sm" style={{ backgroundColor: ASSET_COLORS.Hospital }}></div>Hospital</div>
+                  <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-full shadow-sm" style={{ backgroundColor: ASSET_COLORS.Residential }}></div>Residential</div>
+                  <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-full shadow-sm" style={{ backgroundColor: ASSET_COLORS.TransitHub }}></div>Transit</div>
+                  <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-full shadow-sm" style={{ backgroundColor: ASSET_COLORS.PowerGrid }}></div>Power</div>
+                  <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-full shadow-sm" style={{ backgroundColor: ASSET_COLORS.Communication }}></div>Comm</div>
+                </div>
               </div>
 
             </div>
@@ -549,7 +603,7 @@ const Dashboard = () => {
                  <div className="bg-white/80 backdrop-blur-xl border border-white px-8 py-5 rounded-2xl shadow-xl text-center flex flex-col items-center">
                     <Activity className="w-8 h-8 text-gray-400 mb-3" />
                     <span className="font-semibold text-gray-900">Awaiting Designation</span>
-                    <p className="text-gray-500 text-sm mt-1 max-w-[260px]">Please select a district to view current status and 12-hour projection.</p>
+                    <p className="text-gray-500 text-sm mt-1 max-w-[260px]">Select a hazard to view current status and 12-hour projection.</p>
                  </div>
                </div>
             )}
@@ -565,13 +619,13 @@ const Dashboard = () => {
 
              <div className="relative border-l border-gray-200 ml-3 flex flex-col gap-8 flex-1">
 
-                {/* 0h entry — always visible once district is chosen */}
+                {/* 0h entry — always visible once hazard is chosen */}
                 <AnimatePresence>
                   <motion.div initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} className="relative pl-6">
                     <div className={`absolute w-3 h-3 bg-white border-2 rounded-full -left-[6.5px] top-1.5 ${(!isBlank && data?.threat === 'Red') ? 'border-apple-red' : (!isBlank && data?.threat === 'Orange') ? 'border-apple-orange' : 'border-gray-300'}`}></div>
                     <div className="text-xs font-semibold text-gray-400 mb-1">0h - T+0.00</div>
                     <div className="text-[15px] font-medium text-gray-800 leading-snug">
-                      {isBlank ? 'Awaiting Data...' : `Alert Active. IMD registers highly anomalous ${data!.event.toLowerCase()} activity over ${data!.districtName}.`}
+                      {isBlank ? 'Awaiting Data...' : `Alert Active. IMD registers highly anomalous ${data!.hazard.toLowerCase()} activity.`}
                     </div>
                     {!isBlank && (
                       <button onClick={() => setOpenModal('0h')} className="mt-2 text-[10px] uppercase tracking-widest font-semibold text-[#6a4b9a] hover:text-[#8a6ab5] flex items-center gap-1 transition-colors">
@@ -652,7 +706,7 @@ const Dashboard = () => {
           <LogicModal
             item={openModal!}
             threat={data!.threat}
-            event={data!.event}
+            hazard={data!.hazard}
             overrideData={
               (overrideActive || hasOffsets)
                 ? {
@@ -664,6 +718,8 @@ const Dashboard = () => {
                   }
                 : undefined
             }
+            isHistoricalMode={archiveMode}
+            historicalSeries={historicalSeries as number[] | undefined}
             onClose={() => setOpenModal(null)}
           />
         )}

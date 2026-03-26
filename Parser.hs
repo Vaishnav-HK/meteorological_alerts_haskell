@@ -21,16 +21,21 @@ defaultAssets =
     , Asset Communication 100.0
     ]
 
--- | Transform a raw IMD Archive Row into a Simulation Scenario
--- Expected Format: [DistrictName, WeatherType, Value, SeverityString]
-fromIMDRow :: [String] -> Maybe Scenario
-fromIMDRow (name:evt:val:sevStr:[]) = Just $ Scenario
-    { districtName = name
-    , event = evt
-    , intensity = val
+-- | Default threat severity derived from hazard selection.
+threatForHazard :: Hazard -> Severity
+threatForHazard Rainfall  = Orange
+threatForHazard Heatwave  = Red
+threatForHazard Cyclone   = Red
+
+-- | Create an initial Scenario from a hazard selection + base intensity.
+-- This replaces district/CSV initialization for the capstone hazard toggle.
+scenarioForHazard :: Hazard -> String -> Scenario
+scenarioForHazard hz baseSeries =
+  Scenario
+    { intensity = if null baseSeries then "150.0" else baseSeries
+    , hazard = hz
     , narrative = ""
     , assets = defaultAssets
-    , threat = parseSeverity sevStr
+    , threat = threatForHazard hz
     , hour = 0
     }
-fromIMDRow _ = Nothing

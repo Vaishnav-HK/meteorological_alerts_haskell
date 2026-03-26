@@ -27,7 +27,7 @@ type OverrideDataForTrace = {
 function getSnippet(
   item: FeedItem,
   _threat?: string,
-  event?: string,
+  hazard?: string,
   overrideData?: OverrideDataForTrace
 ): Snippet {
   if (item === '0h') {
@@ -35,10 +35,10 @@ function getSnippet(
       label: 'Initial Alert — generateNarrative',
       lines: [
         { code: 'generateNarrative :: Scenario -> String' },
-        { code: 'generateNarrative sc = case (event sc, threat sc) of' },
-        { code: `    ("${event ?? 'Rainfall'}", Red) -> "Critical ${event ?? 'rainfall'} is overwhelming " ++ ...`, hot: true },
+        { code: 'generateNarrative sc = case (hazard sc, threat sc) of' },
+        { code: `    ("${hazard ?? 'Rainfall'}", Red) -> "Critical ${hazard ?? 'rainfall'} is overwhelming " ++ ...`, hot: true },
         { code: '    ("Cyclone", _)    -> "High-velocity cyclonic winds are actively ..." ' },
-        { code: '    _                 -> "Localized " ++ event sc ++ " events observed."' },
+        { code: '    _                 -> "Localized " ++ hazard sc ++ " events observed."' },
       ]
     };
   }
@@ -153,13 +153,21 @@ function syntaxHighlight(code: string): React.ReactNode {
 interface LogicModalProps {
   item: FeedItem;
   threat?: string;
-  event?: string;
+  hazard?: string;
   overrideData?: OverrideDataForTrace;
+  isHistoricalMode?: boolean;
+  historicalSeries?: number[];
   onClose: () => void;
 }
 
-export const LogicModal: React.FC<LogicModalProps> = ({ item, threat, event, overrideData, onClose }) => {
-  const snippet = getSnippet(item, threat, event, overrideData);
+export const LogicModal: React.FC<LogicModalProps> = ({ item, threat, hazard, overrideData, isHistoricalMode, historicalSeries, onClose }) => {
+  const snippet = getSnippet(item, threat, hazard, overrideData);
+  const weightedAsset =
+    hazard === 'Cyclone'
+      ? 'Communication'
+      : hazard === 'Heatwave'
+        ? 'PowerGrid'
+        : 'All Assets';
 
   // Close on Escape
   useEffect(() => {
@@ -212,6 +220,42 @@ export const LogicModal: React.FC<LogicModalProps> = ({ item, threat, event, ove
               </button>
             </div>
           </div>
+
+          {/* Hazard-specific stress banner */}
+          {hazard && (
+            <div className="px-5 py-3 bg-[#1f2937] border-b border-[#30363d] flex items-center gap-3 border-l-4 border-l-indigo-500">
+              <div className="p-1.5 rounded-full bg-indigo-500/20 text-indigo-300 shrink-0">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 2l3 7 7 3-7 3-3 7-3-7-7-3 7-3 3-7z" />
+                </svg>
+              </div>
+              <p className="text-[#c9d1d9] text-[13px] leading-relaxed font-medium">
+                <strong className="text-indigo-300 block mb-0.5 mt-0.5">Hazard-Specific Stress:</strong>
+                Hazard-Specific Stress: <span className="text-indigo-300 font-bold">{hazard}</span> weighting applied to{' '}
+                <span className="text-indigo-300 font-bold">{weightedAsset}</span> decay model.
+              </p>
+            </div>
+          )}
+
+          {/* Data Source Archive Banner */}
+          {isHistoricalMode && (
+            <div className="px-5 py-3 bg-[#1f2937] border-b border-[#30363d] flex items-center gap-3 border-l-4 border-l-cyan-500">
+              <div className="p-1.5 rounded-full bg-cyan-500/20 text-cyan-300 shrink-0">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 22h14a2 2 0 0 0 2-2V7.5L14.5 2H6a2 2 0 0 0-2 2v4"/><polyline points="14 2 14 8 20 8"/><path d="M2 15h10"/><path d="M9 18v-6"/></svg>
+              </div>
+              <div className="text-[#c9d1d9] text-[13px] leading-relaxed font-medium">
+                <strong className="text-cyan-300 block mb-0.5 mt-0.5">MODE: Historical Archive. Data Source: imdlib.</strong>
+                {historicalSeries && historicalSeries.length > 0 ? (
+                  <>
+                    <span className="text-gray-400 text-xs font-mono block my-1 bg-black/30 p-1.5 rounded">Sequence: [{historicalSeries.join(', ')}]</span>
+                    T+{historicalSeries.indexOf(Math.max(...historicalSeries))} Intensity Spike detected ({Math.max(...historicalSeries)} {hazard === 'Rainfall' ? 'mm' : hazard==='Heatwave'?'°C':'km/h'}/hr). Evaluating surge-load on {weightedAsset}.
+                  </>
+                ) : (
+                  <>Validating model against observed historical intensity.</>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Override Alert Banner */}
           {overrideData && (

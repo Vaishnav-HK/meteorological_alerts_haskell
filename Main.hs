@@ -11,16 +11,13 @@ import Servant
 import Network.Wai.Handler.Warp
 import Network.Wai.Middleware.Cors
 import Network.Wai (Middleware)
-import Data.Csv
-import qualified Data.ByteString.Lazy as BL
-import qualified Data.Vector as V
-import Control.Monad.IO.Class (liftIO)
+import Data.List (zipWith6)
 import Data.Char (toLower)
-import Data.List (nub, zipWith5, zipWith6)
 
 -- Define the Servant API
-type API = "simulate"   :> Capture "district" String :> Get '[JSON] Scenario
-      :<|> "trajectory" :> Capture "district" String 
+type API = "simulate"   :> Capture "hazard" String :> QueryParam "historicalIntensity" String :> Get '[JSON] Scenario
+      :<|> "trajectory" :> Capture "hazard" String 
+                        :> QueryParam "historicalIntensity" String
                         :> QueryParam "overrideOrigin"    Int 
                         :> QueryParam "overrideIntensity" Double 
                         :> QueryParam "hoOffset"          Double
@@ -29,38 +26,30 @@ type API = "simulate"   :> Capture "district" String :> Get '[JSON] Scenario
                         :> QueryParam "rOffset"           Double
                         :> QueryParam "cOffset"           Double
                         :> Get '[JSON] TrajectoryResponse
-      :<|> "districts"  :> Get '[JSON] [String]
 
 api :: Proxy API
 api = Proxy
 
-type IMDRow = (String, String, String, String)
-
--- Load IMD data
-loadIMDData :: FilePath -> IO [Scenario]
-loadIMDData path = do
-    csvData <- BL.readFile path
-    case decode HasHeader csvData of
-        Left err -> do
-            putStrLn $ "Error parsing CSV: " ++ err
-            return []
-        Right v -> do
-            let rows = V.toList (v :: V.Vector IMDRow)
-            let scenarios = [ s | (d,e,v',sev) <- rows, Just s <- [fromIMDRow [d,e,v',sev]] ]
-            return scenarios
+parseHazard :: String -> Maybe Hazard
+parseHazard s = case map toLower s of
+    "rainfall" -> Just Rainfall
+    "heatwave" -> Just Heatwave
+    "cyclone"  -> Just Cyclone
+    _          -> Nothing
 
 -- | Build the full 13-point TrajectoryResponse for a matched Scenario
 buildTrajectory :: Scenario -> Maybe Int -> Maybe Double -> [Double] -> TrajectoryResponse
 buildTrajectory sc mOrigin mIntensity offsets =
-    let intensityVal  = parseIntensity (intensity sc)
+    let hz            = hazard sc
+        intensities   = parseSeries (intensity sc)
         [hOff, pOff, tOff, rOff, cOff] = take 5 (offsets ++ repeat 0.0)
         hasOffset     = any (/= 0.0) offsets
-        -- Baseline (ghost) trajectories - always from original CSV
-        hPoints       = trajectoryFor Hospital    intensityVal
-        pPoints       = trajectoryFor PowerGrid   intensityVal
-        tPoints       = trajectoryFor TransitHub  intensityVal
-        rPoints       = trajectoryFor Residential intensityVal
-        cPoints       = communicationTrajectory intensityVal 0.0 pPoints
+        -- Baseline (ghost) trajectories - always from original CSV or event series
+        hPoints       = trajectoryFor hz Hospital    intensities
+        pPoints       = trajectoryFor hz PowerGrid   intensities
+        tPoints       = trajectoryFor hz TransitHub  intensities
+        rPoints       = trajectoryFor hz Residential intensities
+        cPoints       = communicationTrajectory hz intensities 0.0 pPoints
         mkPoint i h p t r c = TrajectoryPoint
             { tpHour          = i
             , tpHospital      = h
@@ -73,49 +62,56 @@ buildTrajectory sc mOrigin mIntensity offsets =
         
         -- Override trajectories: intensity override (optionally combined with resilience offsets)
         mOverrideTrajectory = case (mOrigin, mIntensity) of
-            -- Manual intensity override: apply intensity change starting at rootT,
-            -- while applying resilience offsets immediately (T+0) if provided.
+            -- Manual intensity override: apply intensity change starting at rootT
             (Just oTime, Just oInt) ->
-                let hO = trajectoryWithOverrideOffset Hospital    intensityVal hOff oTime oInt
-                    pO = trajectoryWithOverrideOffset PowerGrid   intensityVal pOff oTime oInt
-                    tO = trajectoryWithOverrideOffset TransitHub  intensityVal tOff oTime oInt
-                    rO = trajectoryWithOverrideOffset Residential intensityVal rOff oTime oInt
-                    cO = communicationTrajectoryWithOverride intensityVal oTime oInt cOff pO
+                let hO = trajectoryWithOverrideOffset hz Hospital    intensities hOff oTime oInt
+                    pO = trajectoryWithOverrideOffset hz PowerGrid   intensities pOff oTime oInt
+                    tO = trajectoryWithOverrideOffset hz TransitHub  intensities tOff oTime oInt
+                    rO = trajectoryWithOverrideOffset hz Residential intensities rOff oTime oInt
+                    cO = communicationTrajectoryWithOverride hz intensities oTime oInt cOff pO
                 in Just (zipWith6 mkPoint [0..12] hO pO tO rO cO)
             _ ->
                 if hasOffset
                 then
-                    let hO = trajectoryForOffset Hospital    intensityVal hOff
-                        pO = trajectoryForOffset PowerGrid   intensityVal pOff
-                        tO = trajectoryForOffset TransitHub  intensityVal tOff
-                        rO = trajectoryForOffset Residential intensityVal rOff
-                        cO = communicationTrajectory intensityVal cOff pO
+                    let hO = trajectoryForOffset hz Hospital    intensities hOff
+                        pO = trajectoryForOffset hz PowerGrid   intensities pOff
+                        tO = trajectoryForOffset hz TransitHub  intensities tOff
+                        rO = trajectoryForOffset hz Residential intensities rOff
+                        cO = communicationTrajectory hz intensities cOff pO
                     in Just (zipWith6 mkPoint [0..12] hO pO tO rO cO)
                 else
                     Nothing
     in TrajectoryResponse
-        { trDistrict   = districtName sc
+        { trHazard     = hz
         , trThreat     = threat sc
         , trIntensity  = intensity sc
-        , trEvent      = event sc
         , trTrajectory = trajectory
         , trOverrideTrajectory = mOverrideTrajectory
         }
 
 -- Handlers
-simulateHandler :: [Scenario] -> String -> Handler Scenario
-simulateHandler scenarios district =
-    case filter (\s -> map toLower (districtName s) == map toLower district) scenarios of
-        [] -> throwError err404 { errBody = "District not found" }
-        (s:_) ->
-            let finalScenario = simulate 12 s
-            in return $ finalScenario { narrative = generateNarrative finalScenario }
+simulateHandler :: String -> Maybe String -> Handler Scenario
+simulateHandler hazardStr mHistorical =
+    case parseHazard hazardStr of
+      Nothing -> throwError err404 { errBody = "Hazard not found" }
+      Just hz ->
+        let baseSeries = maybe "" id mHistorical
+            sc0 = scenarioForHazard hz baseSeries
+            finalScenario = simulate 12 sc0
+        in return $ finalScenario { narrative = generateNarrative finalScenario }
 
-trajectoryHandler :: [Scenario] -> String -> Maybe Int -> Maybe Double -> Maybe Double -> Maybe Double -> Maybe Double -> Maybe Double -> Maybe Double -> Handler TrajectoryResponse
-trajectoryHandler scenarios district mOrigin mIntensity mHo mPg mTh mR mC =
-    case filter (\s -> map toLower (districtName s) == map toLower district) scenarios of
-        [] -> throwError err404 { errBody = "District not found" }
-        (s:_) -> return $ buildTrajectory s mOrigin mIntensity
+trajectoryHandler :: String
+  -> Maybe String
+  -> Maybe Int -> Maybe Double
+  -> Maybe Double -> Maybe Double -> Maybe Double -> Maybe Double -> Maybe Double
+  -> Handler TrajectoryResponse
+trajectoryHandler hazardStr mHistorical mOrigin mIntensity mHo mPg mTh mR mC =
+    case parseHazard hazardStr of
+      Nothing -> throwError err404 { errBody = "Hazard not found" }
+      Just hz ->
+        let baseSeries = maybe "" id mHistorical
+            sc0 = scenarioForHazard hz baseSeries
+        in return $ buildTrajectory sc0 mOrigin mIntensity
             [ maybe 0.0 id mHo
             , maybe 0.0 id mPg
             , maybe 0.0 id mTh
@@ -123,16 +119,9 @@ trajectoryHandler scenarios district mOrigin mIntensity mHo mPg mTh mR mC =
             , maybe 0.0 id mC
             ]
 
-districtsHandler :: [Scenario] -> Handler [String]
-districtsHandler scenarios = return $ nub $ map districtName scenarios
-
 -- Application
-app :: [Scenario] -> Application
-app scenarios = serve api
-    (    simulateHandler   scenarios
-    :<|> trajectoryHandler scenarios
-    :<|> districtsHandler  scenarios
-    )
+app :: Application
+app = serve api (simulateHandler :<|> trajectoryHandler)
 
 -- CORS Middleware
 corsPolicy :: Middleware
@@ -140,8 +129,5 @@ corsPolicy = cors (const $ Just simpleCorsResourcePolicy)
 
 main :: IO ()
 main = do
-    putStrLn "Loading IMD Archive..."
-    scenarios <- loadIMDData "imd_archive.csv"
-    putStrLn $ "Loaded " ++ show (length scenarios) ++ " scenarios."
     putStrLn "Starting Servant API on port 8080..."
-    run 8080 (corsPolicy $ app scenarios)
+    run 8080 (corsPolicy app)

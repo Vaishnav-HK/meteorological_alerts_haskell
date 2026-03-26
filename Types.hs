@@ -10,6 +10,10 @@ import Data.Aeson.TH (deriveJSON, defaultOptions)
 data Severity = Green | Yellow | Orange | Red
     deriving (Show, Eq, Ord, Enum, Bounded, Generic)
 
+-- | Hazard types selected by the user.
+data Hazard = Rainfall | Heatwave | Cyclone
+  deriving (Show, Eq, Ord, Enum, Bounded, Generic)
+
 -- | Infrastructure categories
 data AssetType
     = Hospital
@@ -26,9 +30,8 @@ data Asset = Asset {
 } deriving (Show, Eq, Generic)
 
 data Scenario = Scenario {
-    districtName :: String,
-    event        :: String,
     intensity    :: String,
+    hazard       :: Hazard,
     narrative    :: String,
     assets       :: [Asset],
     threat       :: Severity,
@@ -47,16 +50,16 @@ data TrajectoryPoint = TrajectoryPoint
 
 -- | The full 13-point trajectory response for all four assets
 data TrajectoryResponse = TrajectoryResponse {
-    trDistrict   :: String,
+    trHazard     :: Hazard,
     trThreat     :: Severity,
     trIntensity  :: String,
-    trEvent      :: String,
     trTrajectory :: [TrajectoryPoint],
     trOverrideTrajectory :: Maybe [TrajectoryPoint]
 } deriving (Show, Eq, Generic)
 
 -- This "Glue" automatically creates ToJSON and FromJSON instances
 $(deriveJSON defaultOptions ''Severity)
+$(deriveJSON defaultOptions ''Hazard)
 $(deriveJSON defaultOptions ''AssetType)
 $(deriveJSON defaultOptions ''Asset)
 $(deriveJSON defaultOptions ''Scenario)

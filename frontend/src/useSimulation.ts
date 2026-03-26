@@ -6,8 +6,7 @@ export interface Asset {
 }
 
 export interface Scenario {
-  districtName: string;
-  event: string;
+  hazard: string;
   intensity: string;
   narrative: string;
   assets: Asset[];
@@ -25,10 +24,9 @@ export interface TrajectoryPoint {
 }
 
 export interface TrajectoryResponse {
-  trDistrict: string;
+  trHazard: string;
   trThreat: string;
   trIntensity: string;
-  trEvent: string;
   trTrajectory: TrajectoryPoint[];
   trOverrideTrajectory?: TrajectoryPoint[];
 }
@@ -40,10 +38,11 @@ export interface TrajectoryQueryParams {
   overrideOrigin?: number;
   overrideIntensity?: number;
   resilienceOverrides?: Partial<Record<AssetKey, number>>;
+  historicalIntensity?: number;
 }
 
-function buildTrajectoryUrl(district: string, params: TrajectoryQueryParams) {
-  const url = new URL(`http://localhost:8080/trajectory/${encodeURIComponent(district)}`);
+function buildTrajectoryUrl(hazard: string, params: TrajectoryQueryParams) {
+  const url = new URL(`http://localhost:8080/trajectory/${encodeURIComponent(hazard)}`);
 
   if (params.overrideOrigin !== undefined && params.overrideIntensity !== undefined) {
     url.searchParams.append('overrideOrigin', params.overrideOrigin.toString());
@@ -64,16 +63,20 @@ function buildTrajectoryUrl(district: string, params: TrajectoryQueryParams) {
     });
   }
 
+  if (params.historicalIntensity !== undefined) {
+    url.searchParams.append('historicalIntensity', params.historicalIntensity.toString());
+  }
+
   return url.toString();
 }
 
-export function useSimulation(district: string) {
+export function useSimulation(hazard: string, historicalIntensity?: number) {
   const [data, setData] = useState<Scenario | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!district) {
+    if (!hazard) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setError(null);
       setLoading(false);
@@ -84,10 +87,15 @@ export function useSimulation(district: string) {
     setLoading(true);
     setError(null);
 
-    fetch(`http://localhost:8080/simulate/${encodeURIComponent(district)}`)
+    const url = new URL(`http://localhost:8080/simulate/${encodeURIComponent(hazard)}`);
+    if (historicalIntensity !== undefined) {
+      url.searchParams.append('historicalIntensity', historicalIntensity.toString());
+    }
+
+    fetch(url.toString())
       .then(res => {
         if (!res.ok) {
-          if (res.status === 404) throw new Error("District Not Found");
+          if (res.status === 404) throw new Error("Hazard Not Found");
           throw new Error("API Error");
         }
         return res.json();
@@ -106,13 +114,13 @@ export function useSimulation(district: string) {
       });
 
     return () => { isMounted = false; };
-  }, [district]);
+  }, [hazard, historicalIntensity]);
 
   return { data, loading, error };
 }
 
 export function useTrajectory(
-  district: string,
+  hazard: string,
   params: TrajectoryQueryParams
 ) {
   const [trajectory, setTrajectory] = useState<TrajectoryResponse | null>(null);
@@ -123,7 +131,7 @@ export function useTrajectory(
   const offsetsKey = params.resilienceOverrides ? JSON.stringify(params.resilienceOverrides) : '';
 
   useEffect(() => {
-    if (!district) {
+    if (!hazard) {
       return;
     }
 
@@ -132,7 +140,7 @@ export function useTrajectory(
     setLoadingTrajectory(true);
 
     // Keep the previous trajectory while fetching to avoid visible "reset jumps".
-    const url = buildTrajectoryUrl(district, params);
+    const url = buildTrajectoryUrl(hazard, params);
     fetch(url, { signal: controller.signal })
       .then(res => {
         if (!res.ok) throw new Error("Trajectory fetch failed");
@@ -156,27 +164,9 @@ export function useTrajectory(
       controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [district, params.overrideOrigin, params.overrideIntensity, offsetsKey]);
+  }, [hazard, params.overrideOrigin, params.overrideIntensity, params.historicalIntensity, offsetsKey]);
 
   return { trajectory, loadingTrajectory };
 }
 
-export function useDistricts() {
-  const [districts, setDistricts] = useState<string[]>([]);
-  const [loadingDistricts, setLoadingDistricts] = useState(true);
-
-  useEffect(() => {
-    fetch('http://localhost:8080/districts')
-      .then(res => res.json())
-      .then(json => {
-        setDistricts(json);
-        setLoadingDistricts(false);
-      })
-      .catch((err) => {
-        console.error("Failed to fetch districts", err);
-        setLoadingDistricts(false);
-      });
-  }, []);
-
-  return { districts, loadingDistricts };
-}
+// District-based data has been removed; hazard selection is handled in the UI.
