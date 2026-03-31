@@ -1,12 +1,13 @@
+[settings]
+workdir = "backend"
+
 [phases.setup]
 nixPkgs = ["cabal-install", "ghc", "zlib", "zlib.dev", "pkg-config", "ncurses"]
 
 [phases.build]
 cmds = [
   "cabal update",
-  "export ZLIB_LIB=$(find /nix/store -name 'zlib-*' -type d | grep -v 'dev' | head -n 1)/lib",
-  "export ZLIB_INC=$(find /nix/store -name 'zlib-dev-*' -type d | head -n 1)/include",
-  "cabal build --extra-lib-dirs=$ZLIB_LIB --extra-include-dirs=$ZLIB_INC"
+  "export ZLIB_LIB=$(find /nix/store -maxdepth 2 -name '*zlib-1*' -type d | grep -v 'dev' | head -n 1)/lib && export ZLIB_INC=$(find /nix/store -maxdepth 2 -name '*zlib-dev*' -type d | head -n 1)/include && cabal build --extra-lib-dirs=$ZLIB_LIB --extra-include-dirs=$ZLIB_INC"
 ]
 
 [start]
