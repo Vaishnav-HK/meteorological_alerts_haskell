@@ -4,9 +4,9 @@ nixPkgs = ["cabal-install", "ghc", "zlib", "zlib.dev", "pkg-config", "ncurses"]
 [phases.build]
 cmds = [
   "cabal update",
-  # Manually point to the Nix-provided zlib paths
-  "export PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/nix/store/*-zlib-*/lib/pkgconfig",
-  "cabal build --extra-include-dirs=/nix/store/*-zlib-dev-*/include --extra-lib-dirs=/nix/store/*-zlib-*/lib"
+  "export ZLIB_LIB=$(find /nix/store -name 'zlib-*' -type d | grep -v 'dev' | head -n 1)/lib",
+  "export ZLIB_INC=$(find /nix/store -name 'zlib-dev-*' -type d | head -n 1)/include",
+  "cabal build --extra-lib-dirs=$ZLIB_LIB --extra-include-dirs=$ZLIB_INC"
 ]
 
 [start]
