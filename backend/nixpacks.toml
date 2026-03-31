@@ -4,6 +4,7 @@ nixPkgs = ["cabal-install", "ghc", "zlib", "zlib.dev", "pkg-config", "ncurses", 
 [phases.build]
 cmds = [
   "cabal update",
+  # We combine everything into ONE shell execution to stay under the 4GB cap
   """
   cabal build --extra-include-dirs=$(pkg-config --variable=includedir zlib) \
               --extra-lib-dirs=$(pkg-config --variable=libdir zlib) \
@@ -16,6 +17,7 @@ cmds = [
 ]
 
 [start]
+# Runs the isolated, stripped binary
 cmd = "./output/imd-server"
 
 [variables]
