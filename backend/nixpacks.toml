@@ -1,14 +1,18 @@
-[settings]
-workdir = "backend"
-
 [phases.setup]
+# These are the Nix packages required for Haskell + C-library linking
 nixPkgs = ["cabal-install", "ghc", "zlib", "zlib.dev", "pkg-config", "ncurses"]
 
 [phases.build]
 cmds = [
   "cabal update",
-  "export ZLIB_LIB=$(find /nix/store -maxdepth 2 -name '*zlib-1*' -type d | grep -v 'dev' | head -n 1)/lib && export ZLIB_INC=$(find /nix/store -maxdepth 2 -name '*zlib-dev*' -type d | head -n 1)/include && cabal build --extra-lib-dirs=$ZLIB_LIB --extra-include-dirs=$ZLIB_INC"
+  # 1. Find the library path, 2. Find the header path, 3. Build with those paths
+  "export Z_LIB=$(find /nix/store -maxdepth 2 -name '*zlib-1*' -type d | grep -v 'dev' | head -n 1)/lib && export Z_INC=$(find /nix/store -maxdepth 2 -name '*zlib-dev*' -type d | head -n 1)/include && cabal build --extra-lib-dirs=$Z_LIB --extra-include-dirs=$Z_INC"
 ]
 
 [start]
+# Matches the executable name 'imd-server' seen in your build logs
 cmd = "cabal run imd-server"
+
+[variables]
+# Ensuring the binary can find the dynamic libraries at runtime
+LD_LIBRARY_PATH = "$LD_LIBRARY_PATH:/nix/store/*-zlib-*/lib"
