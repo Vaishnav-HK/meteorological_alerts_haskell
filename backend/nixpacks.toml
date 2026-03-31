@@ -1,5 +1,5 @@
 [phases.setup]
-nixPkgs = ["ghc", "cabal-install", "zlib", "gmp"] 
+nixPkgs = ["ghc", "cabal-install", "zlib", "gmp", "zlib1g-dev", "libtinfo-dev", "pkg-config"] 
 
 [phases.build]
 cmds = ["cabal update", "cabal build"]
