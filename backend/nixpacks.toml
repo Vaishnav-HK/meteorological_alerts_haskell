@@ -1,19 +1,18 @@
 [phases.setup]
-# Added 'stack' to the package list
-nixPkgs = ["cabal-install", "ghc", "zlib", "zlib.dev", "pkg-config", "ncurses", "binutils", "haskellPackages.stack"]
+nixPkgs = ["cabal-install", "ghc", "zlib", "zlib.dev", "pkg-config", "ncurses", "binutils"]
 
 [phases.build]
 cmds = [
-  # 1. Setup stack (this installs the specific GHC version needed)
-  "stack setup",
-  # 2. Build and Purge in one line to stay under 4GB
+  "cabal update",
+  # We use --overwrite-policy=always to ensure a clean binary replace
   """
-  stack build --extra-include-dirs=$(pkg-config --variable=includedir zlib) \
-              --extra-lib-dirs=$(pkg-config --variable=libdir zlib) && \
+  cabal build --extra-include-dirs=$(pkg-config --variable=includedir zlib) \
+              --extra-lib-dirs=$(pkg-config --variable=libdir zlib) \
+              --disable-optimization && \
   mkdir -p ./output && \
-  cp $(stack path --local-install-root)/bin/imd-server ./output/imd-server && \
+  cp $(cabal list-bin imd-server) ./output/imd-server && \
   strip ./output/imd-server && \
-  rm -rf .stack-work /root/.stack
+  rm -rf dist-newstyle /root/.cabal /root/.ghc
   """
 ]
 
