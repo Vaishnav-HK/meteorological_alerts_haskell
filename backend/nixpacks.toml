@@ -1,18 +1,19 @@
 [phases.setup]
-# These are the Nix packages required for Haskell + C-library linking
+# Standard Nix packages for Haskell compilation + C-library headers
 nixPkgs = ["cabal-install", "ghc", "zlib", "zlib.dev", "pkg-config", "ncurses"]
 
 [phases.build]
 cmds = [
   "cabal update",
-  # 1. Find the library path, 2. Find the header path, 3. Build with those paths
-  "export Z_LIB=$(find /nix/store -maxdepth 2 -name '*zlib-1*' -type d | grep -v 'dev' | head -n 1)/lib && export Z_INC=$(find /nix/store -maxdepth 2 -name '*zlib-dev*' -type d | head -n 1)/include && cabal build --extra-lib-dirs=$Z_LIB --extra-include-dirs=$Z_INC"
+  # This single line resolves the paths and builds in one go to keep variables alive
+  "cabal build --extra-include-dirs=$(pkg-config --variable=includedir zlib) --extra-lib-dirs=$(pkg-config --variable=libdir zlib)"
 ]
 
 [start]
-# Matches the executable name 'imd-server' seen in your build logs
+# Points to the executable name identified in your logs
 cmd = "cabal run imd-server"
 
 [variables]
-# Ensuring the binary can find the dynamic libraries at runtime
-LD_LIBRARY_PATH = "$LD_LIBRARY_PATH:/nix/store/*-zlib-*/lib"
+# Assists the linker and pkg-config in finding the Nix-specific locations
+PKG_CONFIG_PATH = "$PKG_CONFIG_PATH:/nix/var/nix/profiles/default/lib/pkgconfig"
+LD_LIBRARY_PATH = "$LD_LIBRARY_PATH:/nix/var/nix/profiles/default/lib"
