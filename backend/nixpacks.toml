@@ -4,11 +4,11 @@ nixPkgs = ["cabal-install", "ghc", "zlib", "zlib.dev", "pkg-config", "ncurses", 
 [phases.build]
 cmds = [
   "cabal update",
-  # We combine build, copy, and purge into ONE single shell command
+  # We remove --jobs=1 to speed up, but keep cleanup on the same line to save space
   """
   cabal build --extra-include-dirs=$(pkg-config --variable=includedir zlib) \
               --extra-lib-dirs=$(pkg-config --variable=libdir zlib) \
-              --jobs=1 --disable-optimization && \
+              --disable-optimization && \
   mkdir -p ./output && \
   cp $(cabal list-bin imd-server) ./output/imd-server && \
   strip ./output/imd-server && \
@@ -17,7 +17,6 @@ cmds = [
 ]
 
 [start]
-# We run the isolated binary from our tiny output folder
 cmd = "./output/imd-server"
 
 [variables]
