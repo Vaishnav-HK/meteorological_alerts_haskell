@@ -38,7 +38,7 @@ export interface TrajectoryQueryParams {
   overrideOrigin?: number;
   overrideIntensity?: number;
   resilienceOverrides?: Partial<Record<AssetKey, number>>;
-  historicalIntensity?: number;
+  historicalSeries?: number[];
 }
 
 function buildTrajectoryUrl(hazard: string, params: TrajectoryQueryParams) {
@@ -63,14 +63,14 @@ function buildTrajectoryUrl(hazard: string, params: TrajectoryQueryParams) {
     });
   }
 
-  if (params.historicalIntensity !== undefined) {
-    url.searchParams.append('historicalIntensity', params.historicalIntensity.toString());
+  if (params.historicalSeries !== undefined && params.historicalSeries.length > 0) {
+    url.searchParams.append('historicalIntensity', JSON.stringify(params.historicalSeries));
   }
 
   return url.toString();
 }
 
-export function useSimulation(hazard: string, historicalIntensity?: number) {
+export function useSimulation(hazard: string, historicalSeries?: number[]) {
   const [data, setData] = useState<Scenario | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -88,8 +88,8 @@ export function useSimulation(hazard: string, historicalIntensity?: number) {
     setError(null);
 
     const url = new URL(`http://localhost:8080/simulate/${encodeURIComponent(hazard)}`);
-    if (historicalIntensity !== undefined) {
-      url.searchParams.append('historicalIntensity', historicalIntensity.toString());
+    if (historicalSeries !== undefined && historicalSeries.length > 0) {
+      url.searchParams.append('historicalIntensity', JSON.stringify(historicalSeries));
     }
 
     fetch(url.toString())
@@ -114,7 +114,8 @@ export function useSimulation(hazard: string, historicalIntensity?: number) {
       });
 
     return () => { isMounted = false; };
-  }, [hazard, historicalIntensity]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hazard, historicalSeries ? JSON.stringify(historicalSeries) : '']);
 
   return { data, loading, error };
 }
@@ -129,6 +130,7 @@ export function useTrajectory(
   // Serialise offsets so the effect dependency comparison works correctly.
   // (We intentionally include this key instead of the full object to avoid unnecessary rerenders.)
   const offsetsKey = params.resilienceOverrides ? JSON.stringify(params.resilienceOverrides) : '';
+  const hsKey = params.historicalSeries ? JSON.stringify(params.historicalSeries) : '';
 
   useEffect(() => {
     if (!hazard) {
@@ -164,7 +166,7 @@ export function useTrajectory(
       controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hazard, params.overrideOrigin, params.overrideIntensity, params.historicalIntensity, offsetsKey]);
+  }, [hazard, params.overrideOrigin, params.overrideIntensity, hsKey, offsetsKey]);
 
   return { trajectory, loadingTrajectory };
 }
