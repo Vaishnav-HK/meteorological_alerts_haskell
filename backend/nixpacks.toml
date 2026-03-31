@@ -4,5 +4,11 @@ nixPkgs = ["cabal-install", "ghc", "zlib", "zlib.dev", "pkg-config", "ncurses"]
 [phases.build]
 cmds = ["cabal update", "cabal build"]
 
+[variables]
+# These tell the compiler exactly where the Nix-installed libraries live
+PKG_CONFIG_PATH = "$PKG_CONFIG_PATH:/nix/store/*-zlib-*/lib/pkgconfig"
+C_INCLUDE_PATH = "$C_INCLUDE_PATH:/nix/store/*-zlib-*/include"
+LIBRARY_PATH = "$LIBRARY_PATH:/nix/store/*-zlib-*/lib"
+
 [start]
 cmd = "cabal run imd-simulator"
