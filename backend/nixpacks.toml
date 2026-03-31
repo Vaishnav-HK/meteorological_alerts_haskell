@@ -1,28 +1,23 @@
 [phases.setup]
-# Standard Nix packages for Haskell + C-library linking
 nixPkgs = ["cabal-install", "ghc", "zlib", "zlib.dev", "pkg-config", "ncurses", "binutils"]
 
 [phases.build]
 cmds = [
   "cabal update",
-  # Combined command: Build -> Copy -> Strip -> Purge
-  # This MUST be one string with '&&' to delete the 3GB of junk BEFORE the layer saves.
   """
   cabal build --extra-include-dirs=$(pkg-config --variable=includedir zlib) \
               --extra-lib-dirs=$(pkg-config --variable=libdir zlib) \
               --disable-optimization && \
   mkdir -p ./output && \
-  cp $(cabal list-bin imd-server) ./output/imd-server && \
+  find dist-newstyle -name imd-server -type f -exec cp {} ./output/imd-server \\; && \
   strip ./output/imd-server && \
   rm -rf dist-newstyle /root/.cabal /root/.ghc
   """
 ]
 
 [start]
-# Runs the final, stripped binary from our tiny output folder
 cmd = "./output/imd-server"
 
 [variables]
-# Ensuring the binary can find the dynamic libraries at runtime
 PKG_CONFIG_PATH = "$PKG_CONFIG_PATH:/nix/var/nix/profiles/default/lib/pkgconfig"
 LD_LIBRARY_PATH = "$LD_LIBRARY_PATH:/nix/var/nix/profiles/default/lib"
