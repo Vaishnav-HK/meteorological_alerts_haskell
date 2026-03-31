@@ -1,17 +1,22 @@
 [phases.setup]
-nixPkgs = ["cabal-install", "ghc", "zlib", "zlib.dev", "pkg-config", "ncurses"]
+nixPkgs = ["cabal-install", "ghc", "zlib", "zlib.dev", "pkg-config", "ncurses", "binutils"]
 
 [phases.build]
 cmds = [
   "cabal update",
-  # Build the project
-  "export Z_LIB=$(find /nix/store -maxdepth 2 -name '*zlib-1*' -type d | grep -v 'dev' | head -n 1)/lib && export Z_INC=$(find /nix/store -maxdepth 2 -name '*zlib-dev*' -type d | head -n 1)/include && cabal build --extra-lib-dirs=$Z_LIB --extra-include-dirs=$Z_INC",
-  # Manually copy the binary to a safe spot so we can delete the rest
-  "mkdir -p ./output && cp $(cabal list-bin imd-server) ./output/imd-server"
+  # 1. Build using pkg-config to find zlib paths dynamically
+  "cabal build --extra-include-dirs=$(pkg-config --variable=includedir zlib) --extra-lib-dirs=$(pkg-config --variable=libdir zlib)",
+  # 2. Create a small output directory
+  "mkdir -p ./output",
+  # 3. Copy the compiled binary to the output directory
+  "cp $(cabal list-bin imd-server) ./output/imd-server",
+  # 4. Strip debug symbols to reduce binary size (saves ~100-200MB)
+  "strip ./output/imd-server"
 ]
 
 [phases.postbuild]
-# This is the "Magic" step: delete the massive build folders (usually 2-3GB)
+# 5. THE CLEANUP: Delete the massive build artifacts (~3GB+) 
+# This ensures the final image stays well under the 4GB limit
 cmds = [
   "rm -rf dist-newstyle",
   "rm -rf /root/.cabal",
@@ -19,9 +24,10 @@ cmds = [
 ]
 
 [start]
-# Run the copied binary directly from the small output folder
+# 6. Run the slim binary from the output folder
 cmd = "./output/imd-server"
 
 [variables]
-# Runtime library paths
+# Runtime library paths so the binary can find libz.so
+PKG_CONFIG_PATH = "$PKG_CONFIG_PATH:/nix/var/nix/profiles/default/lib/pkgconfig"
 LD_LIBRARY_PATH = "$LD_LIBRARY_PATH:/nix/var/nix/profiles/default/lib"
