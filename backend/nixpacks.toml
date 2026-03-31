@@ -1,19 +1,27 @@
 [phases.setup]
-# Standard Nix packages for Haskell compilation + C-library headers
 nixPkgs = ["cabal-install", "ghc", "zlib", "zlib.dev", "pkg-config", "ncurses"]
 
 [phases.build]
 cmds = [
   "cabal update",
-  # This single line resolves the paths and builds in one go to keep variables alive
-  "cabal build --extra-include-dirs=$(pkg-config --variable=includedir zlib) --extra-lib-dirs=$(pkg-config --variable=libdir zlib)"
+  # Build the project
+  "export Z_LIB=$(find /nix/store -maxdepth 2 -name '*zlib-1*' -type d | grep -v 'dev' | head -n 1)/lib && export Z_INC=$(find /nix/store -maxdepth 2 -name '*zlib-dev*' -type d | head -n 1)/include && cabal build --extra-lib-dirs=$Z_LIB --extra-include-dirs=$Z_INC",
+  # Manually copy the binary to a safe spot so we can delete the rest
+  "mkdir -p ./output && cp $(cabal list-bin imd-server) ./output/imd-server"
+]
+
+[phases.postbuild]
+# This is the "Magic" step: delete the massive build folders (usually 2-3GB)
+cmds = [
+  "rm -rf dist-newstyle",
+  "rm -rf /root/.cabal",
+  "rm -rf /root/.ghc"
 ]
 
 [start]
-# Points to the executable name identified in your logs
-cmd = "cabal run imd-server"
+# Run the copied binary directly from the small output folder
+cmd = "./output/imd-server"
 
 [variables]
-# Assists the linker and pkg-config in finding the Nix-specific locations
-PKG_CONFIG_PATH = "$PKG_CONFIG_PATH:/nix/var/nix/profiles/default/lib/pkgconfig"
+# Runtime library paths
 LD_LIBRARY_PATH = "$LD_LIBRARY_PATH:/nix/var/nix/profiles/default/lib"
