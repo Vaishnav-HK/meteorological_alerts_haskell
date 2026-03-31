@@ -5,4 +5,4 @@ nixPkgs = ["ghc", "cabal-install", "zlib", "zlib.dev", "gmp", "ncurses", "pkg-co
 cmds = ["cabal update", "cabal build"]
 
 [start]
-cmd = "cabal run imd-server"
+cmd = "cabal run imd-simulator"
