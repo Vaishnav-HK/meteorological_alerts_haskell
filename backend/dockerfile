@@ -21,7 +21,7 @@ RUN cabal update && cabal build --only-dependencies --disable-optimization
 COPY . .
 
 # -j1 is smart for Render/low-RAM environments to prevent OOM
-RUN cabal build --disable-optimization -j1 && \
+RUN cabal build --disable-optimization -j1 --ghc-options="-threaded -with-rtsopts=-N" && \
     mkdir -p /install && \
     cp $(find dist-newstyle -name imd-server -type f) /install/imd-server
 
