@@ -1,51 +1,40 @@
-# --- STAGE 1: The Builder (Alpine version is much smaller) ---
-FROM haskell:9.6.4 AS builder
-# Install build dependencies for Haskell on Alpine
-RUN apk add --no-cache \
-    g++ \
-    gcc \
-    libc-dev \
-    libffi-dev \
-    make \
-    musl-dev \
-    ncurses-dev \
-    zlib-dev \
-    pkgconfig
+# --- STAGE 1: The Builder ---
+# Using the image that successfully extracted in your logs
+FROM haskell:9.6.5 AS builder
+
+# Install C libraries needed for the build (Debian uses apt-get)
+RUN apt-get update && apt-get install -y \
+    libz-dev \
+    pkg-config \
+    libncurses-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy cabal file first for better caching
+# The rest of your file remains the same...
 COPY *.cabal ./
 RUN cabal update && cabal build --only-dependencies --disable-optimization
 
 COPY . .
 
-# Build the app. We add -j1 to limit RAM usage so Render doesn't kill the build.
+# Build with -j1 to keep memory usage low during the actual compile
 RUN cabal build --disable-optimization -j1 && \
     mkdir -p /install && \
     cp $(find dist-newstyle -name imd-server -type f) /install/imd-server
 
 # --- STAGE 2: The Final Image ---
-FROM alpine:3.18
+FROM debian:bookworm-slim
 
-# Install runtime libraries
-RUN apk add --no-cache \
-    libffi \
-    libgcc \
-    libstdc++ \
-    ncurses-libs \
-    zlib \
-    ca-certificates
+RUN apt-get update && apt-get install -y \
+    libz1 \
+    libncurses6 \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy binary from builder
 COPY --from=builder /install/imd-server .
 
-# Ensure executable and bind to 0.0.0.0
 RUN chmod +x ./imd-server
-
-# Port 8080 as per your previous config
-EXPOSE 8080
 
 CMD ["./imd-server"]
