@@ -1,43 +1,52 @@
-# --- STAGE 1: The Builder ---
-# Change from 9.4.6-slim to 9.6.4-slim (which uses a newer Debian)
-FROM ghcr.io/haskell/ghcup-setup:9.6.4 AS builder
+# --- STAGE 1: The Builder (Alpine version is much smaller) ---
+FROM haskell:9.6.4-alpine3.18 AS builder
 
-# Install C libraries needed for the build
-RUN apt-get update && apt-get install -y \
-    libz-dev \
-    pkg-config \
-    libncurses-dev \
-    && rm -rf /var/lib/apt/lists/*
+# Install build dependencies for Haskell on Alpine
+RUN apk add --no-cache \
+    g++ \
+    gcc \
+    libc-dev \
+    libffi-dev \
+    make \
+    musl-dev \
+    ncurses-dev \
+    zlib-dev \
+    pkgconfig
 
 WORKDIR /app
 
-# The rest of your file remains the same...
+# Copy cabal file first for better caching
 COPY *.cabal ./
 RUN cabal update && cabal build --only-dependencies --disable-optimization
 
 COPY . .
 
-RUN cabal build --disable-optimization && \
+# Build the app. We add -j1 to limit RAM usage so Render doesn't kill the build.
+RUN cabal build --disable-optimization -j1 && \
     mkdir -p /install && \
     cp $(find dist-newstyle -name imd-server -type f) /install/imd-server
 
 # --- STAGE 2: The Final Image ---
-FROM debian:bookworm-slim
+FROM alpine:3.18
 
-# Install ONLY the runtime libraries (much smaller than -dev versions)
-RUN apt-get update && apt-get install -y \
-    libz1 \
-    libncurses6 \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+# Install runtime libraries
+RUN apk add --no-cache \
+    libffi \
+    libgcc \
+    libstdc++ \
+    ncurses-libs \
+    zlib \
+    ca-certificates
 
 WORKDIR /app
 
-# Copy ONLY the finished binary from the builder stage
-COPY --from=builder /install/imd-simulator.cabal .
+# Copy binary from builder
+COPY --from=builder /install/imd-server .
 
-# Ensure the binary is executable
-RUN chmod +x ./imd-simulator.cabal
+# Ensure executable and bind to 0.0.0.0
+RUN chmod +x ./imd-server
 
-# Start the server
-CMD ["./imd-simulator.cabal"]
+# Port 8080 as per your previous config
+EXPOSE 8080
+
+CMD ["./imd-server"]
