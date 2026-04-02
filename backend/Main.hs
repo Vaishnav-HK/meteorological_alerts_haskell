@@ -125,7 +125,12 @@ app = serve api (simulateHandler :<|> trajectoryHandler)
 
 -- CORS Middleware
 corsPolicy :: Middleware
-corsPolicy = cors (const $ Just simpleCorsResourcePolicy)
+corsPolicy = cors (const $ Just policy)
+  where
+    policy = simpleCorsResourcePolicy
+      { corsRequestHeaders = ["Content-Type", "Authorization", "Accept"]
+      , corsMethods        = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+      }
 
 main :: IO ()
 main = do

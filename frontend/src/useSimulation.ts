@@ -41,8 +41,10 @@ export interface TrajectoryQueryParams {
   historicalSeries?: number[];
 }
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
+
 function buildTrajectoryUrl(hazard: string, params: TrajectoryQueryParams) {
-  const url = new URL(`http://localhost:8080/trajectory/${encodeURIComponent(hazard)}`);
+  const url = new URL(`${API_BASE_URL}/trajectory/${encodeURIComponent(hazard)}`);
 
   if (params.overrideOrigin !== undefined && params.overrideIntensity !== undefined) {
     url.searchParams.append('overrideOrigin', params.overrideOrigin.toString());
@@ -87,7 +89,7 @@ export function useSimulation(hazard: string, historicalSeries?: number[]) {
     setLoading(true);
     setError(null);
 
-    const url = new URL(`http://localhost:8080/simulate/${encodeURIComponent(hazard)}`);
+    const url = new URL(`${API_BASE_URL}/simulate/${encodeURIComponent(hazard)}`);
     if (historicalSeries !== undefined && historicalSeries.length > 0) {
       url.searchParams.append('historicalIntensity', JSON.stringify(historicalSeries));
     }
