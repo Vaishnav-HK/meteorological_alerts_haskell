@@ -1,6 +1,6 @@
 # --- STAGE 1: The Builder (Updated to Bookworm) ---
 # Specifying 'bookworm' ensures we aren't using the EOL Buster repositories
-FROM haskell:9.6.5-bookworm AS builder
+FROM haskell:9.6.5-slim-bullseye AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
