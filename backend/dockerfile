@@ -1,7 +1,8 @@
-# --- STAGE 1: The Builder (Debian Slim is stable on Render) ---
-FROM haskell:9.6.5-slim AS builder
+# --- STAGE 1: The Builder (Updated to Bookworm) ---
+# Specifying 'bookworm' ensures we aren't using the EOL Buster repositories
+FROM haskell:9.6.5-slim-bookworm AS builder
 
-# Debian uses apt-get, not apk. build-essential replaces g++, gcc, and make.
+# Install build dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \
     libffi-dev \
@@ -13,21 +14,21 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
+# Optimization: Copy only cabal file first to cache dependency builds
 COPY *.cabal ./
 RUN cabal update && cabal build --only-dependencies --disable-optimization
 
 COPY . .
 
-# -j1 is crucial to avoid OOM kills during compilation
+# -j1 is smart for Render/low-RAM environments to prevent OOM
 RUN cabal build --disable-optimization -j1 && \
     mkdir -p /install && \
     cp $(find dist-newstyle -name imd-server -type f) /install/imd-server
 
 # --- STAGE 2: The Final Image ---
-# We use debian-slim here because a binary built on Debian won't run on Alpine 
-# due to different C libraries (glibc vs musl).
 FROM debian:bookworm-slim
 
+# Note: Bookworm uses newer library versions (libffi8, libncurses6, etc.)
 RUN apt-get update && apt-get install -y \
     libffi8 \
     libgmp10 \
@@ -43,4 +44,5 @@ RUN chmod +x ./imd-server
 
 EXPOSE 8080
 
+# It's good practice to ensure the binary handles signals correctly
 CMD ["./imd-server"]
