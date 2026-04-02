@@ -1,6 +1,6 @@
 # --- STAGE 1: The Builder ---
 # Change from 9.4.6-slim to 9.6.4-slim (which uses a newer Debian)
-FROM haskell:9.6.4-slim AS builder
+FROM ghcr.io/haskell/ghcup-setup:9.6.4 AS builder
 
 # Install C libraries needed for the build
 RUN apt-get update && apt-get install -y \
