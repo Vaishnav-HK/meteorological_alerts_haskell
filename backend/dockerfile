@@ -34,10 +34,10 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Copy ONLY the finished binary from the builder stage
-COPY --from=builder /install/imd-server .
+COPY --from=builder /install/imd-simulator.cabal .
 
 # Ensure the binary is executable
-RUN chmod +x ./imd-server
+RUN chmod +x ./imd-simulator.cabal
 
 # Start the server
-CMD ["./imd-server"]
+CMD ["./imd-simulator.cabal"]
