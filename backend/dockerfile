@@ -1,5 +1,5 @@
 # --- STAGE 1: The Builder (Alpine version is much smaller) ---
-FROM haskell:9.6.4-alpine3.18 AS builder
+FROM haskell:9.6.4-alpine AS builder
 
 # Install build dependencies for Haskell on Alpine
 RUN apk add --no-cache \
