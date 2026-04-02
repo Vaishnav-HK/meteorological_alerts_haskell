@@ -1,51 +1,46 @@
-# --- STAGE 1: The Builder (Alpine version is much smaller) ---
+# --- STAGE 1: The Builder (Debian Slim is stable on Render) ---
 FROM haskell:9.6.5-slim AS builder
-# Install build dependencies for Haskell on Alpine
-RUN apk add --no-cache \
-    g++ \
-    gcc \
-    libc-dev \
+
+# Debian uses apt-get, not apk. build-essential replaces g++, gcc, and make.
+RUN apt-get update && apt-get install -y \
+    build-essential \
     libffi-dev \
-    make \
-    musl-dev \
-    ncurses-dev \
-    zlib-dev \
-    pkgconfig
+    libgmp-dev \
+    libncurses-dev \
+    libz-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy cabal file first for better caching
 COPY *.cabal ./
 RUN cabal update && cabal build --only-dependencies --disable-optimization
 
 COPY . .
 
-# Build the app. We add -j1 to limit RAM usage so Render doesn't kill the build.
+# -j1 is crucial to avoid OOM kills during compilation
 RUN cabal build --disable-optimization -j1 && \
     mkdir -p /install && \
     cp $(find dist-newstyle -name imd-server -type f) /install/imd-server
 
 # --- STAGE 2: The Final Image ---
-FROM alpine:3.18
+# We use debian-slim here because a binary built on Debian won't run on Alpine 
+# due to different C libraries (glibc vs musl).
+FROM debian:bookworm-slim
 
-# Install runtime libraries
-RUN apk add --no-cache \
-    libffi \
-    libgcc \
-    libstdc++ \
-    ncurses-libs \
-    zlib \
-    ca-certificates
+RUN apt-get update && apt-get install -y \
+    libffi8 \
+    libgmp10 \
+    libncurses6 \
+    libz1 \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy binary from builder
 COPY --from=builder /install/imd-server .
-
-# Ensure executable and bind to 0.0.0.0
 RUN chmod +x ./imd-server
 
-# Port 8080 as per your previous config
 EXPOSE 8080
 
 CMD ["./imd-server"]
