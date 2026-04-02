@@ -1,6 +1,6 @@
 # --- STAGE 1: The Builder ---
-# We use a full Haskell image to get GHC and Cabal
-FROM haskell:9.4.6-slim AS builder
+# Change from 9.4.6-slim to 9.6.4-slim (which uses a newer Debian)
+FROM haskell:9.6.4-slim AS builder
 
 # Install C libraries needed for the build
 RUN apt-get update && apt-get install -y \
@@ -11,21 +11,17 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy only the .cabal file first to cache dependencies (faster builds)
+# The rest of your file remains the same...
 COPY *.cabal ./
 RUN cabal update && cabal build --only-dependencies --disable-optimization
 
-# Copy the rest of the source code
 COPY . .
 
-# Build the actual server
 RUN cabal build --disable-optimization && \
     mkdir -p /install && \
-    # Find the binary and move it to a predictable location
     cp $(find dist-newstyle -name imd-server -type f) /install/imd-server
 
 # --- STAGE 2: The Final Image ---
-# We switch to a tiny Debian image for the final product
 FROM debian:bookworm-slim
 
 # Install ONLY the runtime libraries (much smaller than -dev versions)
